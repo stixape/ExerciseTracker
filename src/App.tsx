@@ -765,7 +765,13 @@ function getCurrentExerciseIndex(session: WorkoutSession, selectedExerciseIndex?
 }
 
 function getNumericInputStyle(value: number | undefined): React.CSSProperties {
-  return { '--digits': String(value ?? 0).length } as React.CSSProperties;
+  return { '--digits': Math.max(1, String(value ?? '').length) } as React.CSSProperties;
+}
+
+function parseOptionalNumber(value: string): number | undefined {
+  if (value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function RestPanel({
@@ -851,8 +857,8 @@ function SetValueEditor({
           disabled={disabled}
           type="number"
           min={0}
-          value={values.seconds ?? 0}
-          onChange={(event) => patch({ seconds: Number(event.target.value) })}
+          value={values.seconds ?? ''}
+          onChange={(event) => patch({ seconds: parseOptionalNumber(event.target.value) })}
         />
       </label>
     );
@@ -869,8 +875,8 @@ function SetValueEditor({
             disabled={disabled}
             type="number"
             min={0}
-            value={values.reps ?? 0}
-            onChange={(event) => patch({ reps: Number(event.target.value) })}
+            value={values.reps ?? ''}
+            onChange={(event) => patch({ reps: parseOptionalNumber(event.target.value) })}
           />
         </label>
         <div className="band-picker" aria-label="Band colours">
@@ -910,8 +916,8 @@ function SetValueEditor({
           type="number"
           min={0}
           step={0.5}
-          value={values.weightKg ?? 0}
-          onChange={(event) => patch({ weightKg: Number(event.target.value) })}
+          value={values.weightKg ?? ''}
+          onChange={(event) => patch({ weightKg: parseOptionalNumber(event.target.value) })}
         />
       </label>
       <label className="compact-field">
@@ -922,8 +928,8 @@ function SetValueEditor({
           disabled={disabled}
           type="number"
           min={0}
-          value={values.reps ?? 0}
-          onChange={(event) => patch({ reps: Number(event.target.value) })}
+          value={values.reps ?? ''}
+          onChange={(event) => patch({ reps: parseOptionalNumber(event.target.value) })}
         />
       </label>
     </div>
@@ -1239,16 +1245,28 @@ function SettingsPage() {
   const { data, saveData } = useTracker();
   const [bandName, setBandName] = useState('');
   const [bandHex, setBandHex] = useState('#6f42c1');
+  const [bandMessage, setBandMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [dataMessage, setDataMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
   const isDarkMode = data.settings.theme === 'dark';
 
   function addBand() {
-    if (!bandName.trim()) return;
+    const trimmedName = bandName.trim();
+    if (!trimmedName) {
+      setBandMessage({ tone: 'error', text: 'Enter a band name.' });
+      return;
+    }
+
+    if (data.bandColours.some((band) => band.name.toLowerCase() === trimmedName.toLowerCase())) {
+      setBandMessage({ tone: 'error', text: 'A band with that name already exists.' });
+      return;
+    }
+
     saveData((current) => ({
       ...current,
-      bandColours: [...current.bandColours, { id: createId('band'), name: bandName.trim(), hex: bandHex }],
+      bandColours: [...current.bandColours, { id: createId('band'), name: trimmedName, hex: bandHex }],
     }));
     setBandName('');
+    setBandMessage({ tone: 'success', text: `${trimmedName} added.` });
   }
 
   async function importJsonFile(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1333,17 +1351,32 @@ function SettingsPage() {
         <div className="add-band-form">
           <label>
             Name
-            <input value={bandName} onChange={(event) => setBandName(event.target.value)} placeholder="Purple" />
+            <input
+              value={bandName}
+              onChange={(event) => {
+                setBandName(event.target.value);
+                setBandMessage(undefined);
+              }}
+              placeholder="Purple"
+            />
           </label>
           <label>
             Colour
-            <input value={bandHex} onChange={(event) => setBandHex(event.target.value)} type="color" />
+            <input
+              value={bandHex}
+              onChange={(event) => {
+                setBandHex(event.target.value);
+                setBandMessage(undefined);
+              }}
+              type="color"
+            />
           </label>
           <button className="secondary-button" type="button" onClick={addBand}>
             <Palette size={18} />
             Add
           </button>
         </div>
+        {bandMessage && <p className={bandMessage.tone === 'error' ? 'form-message' : 'success-message'}>{bandMessage.text}</p>}
       </section>
 
       <section className="section-block">

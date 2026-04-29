@@ -72,6 +72,35 @@ test('data tools expose exports and reject invalid imports without crashing', as
   await expect(page.getByRole('heading', { name: 'Bands and data' })).toBeVisible();
 });
 
+test('settings adds custom band colours with visible validation', async ({ page }) => {
+  await page.getByRole('link', { name: 'Settings' }).click();
+
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('Enter a band name.')).toBeVisible();
+
+  await page.getByLabel('Name').fill('Purple');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+  await expect(page.getByText('Purple added.')).toBeVisible();
+  await expect(page.getByText('Purple', { exact: true })).toBeVisible();
+});
+
+test('plan numeric target fields can be cleared before entering new values', async ({ page }) => {
+  await page.getByRole('link', { name: 'Plan' }).click();
+
+  const kgInput = page.getByLabel('Kg').first();
+  await kgInput.fill('');
+  await expect(kgInput).toHaveValue('');
+  await kgInput.fill('12.5');
+  await expect(kgInput).toHaveValue('12.5');
+
+  const repsInput = page.getByLabel('Reps').first();
+  await repsInput.fill('');
+  await expect(repsInput).toHaveValue('');
+  await repsInput.fill('8');
+  await expect(repsInput).toHaveValue('8');
+});
+
 test('mobile primary navigation stays inside the viewport', async ({ page }) => {
   const viewport = page.viewportSize();
   test.skip(!viewport || viewport.width > 500, 'Mobile viewport check only.');
