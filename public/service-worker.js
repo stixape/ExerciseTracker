@@ -1,5 +1,11 @@
 const CACHE_NAME = 'exercise-tracker-v1';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
+const SCOPE_URL = new URL(self.registration.scope);
+const APP_SHELL = [
+  new URL('.', SCOPE_URL).pathname,
+  new URL('index.html', SCOPE_URL).pathname,
+  new URL('manifest.webmanifest', SCOPE_URL).pathname,
+  new URL('icons/icon.svg', SCOPE_URL).pathname,
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
@@ -28,7 +34,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
           return response;
         })
-        .catch(() => caches.match('/index.html'));
+        .catch(() => caches.match(new URL('index.html', SCOPE_URL).pathname));
     }),
   );
 });

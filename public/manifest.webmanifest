@@ -2,8 +2,8 @@
   "name": "ExerciseTracker",
   "short_name": "ExerciseTracker",
   "description": "Plan workouts, log sets, rest between sets, and track strength progress.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#f6f3ed",
@@ -11,7 +11,7 @@
   "categories": ["fitness", "health", "productivity"],
   "icons": [
     {
-      "src": "/icons/icon.svg",
+      "src": "icons/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
