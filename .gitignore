@@ -6,3 +6,5 @@ dist/
 *.log
 dev-server.log
 dev-server.err
+test-results/
+playwright-report/

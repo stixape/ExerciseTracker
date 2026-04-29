@@ -2,6 +2,9 @@ import type { AppData } from '../domain/types';
 import { createDefaultAppData, createDefaultDayForWeekday } from '../domain/sampleData';
 
 const storageKey = (userId: string) => `exercise-tracker:data:${userId}`;
+const JSON_EXPORT_VERSION = 1;
+
+export type JsonImportResult = { ok: true; data: AppData } | { ok: false; error: string };
 
 export function loadLocalData(userId: string): AppData {
   const raw = localStorage.getItem(storageKey(userId));
@@ -15,7 +18,7 @@ export function loadLocalData(userId: string): AppData {
   }
 }
 
-function normalizeLocalData(data: AppData, userId: string): AppData {
+export function normalizeLocalData(data: Partial<AppData>, userId: string): AppData {
   const defaultData = createDefaultAppData(userId);
   const baseDays = data.template?.days ?? defaultData.template.days;
   const existingWeekdays = new Set(baseDays.map((day) => day.weekday));
@@ -52,14 +55,49 @@ function normalizeLocalData(data: AppData, userId: string): AppData {
       ...data.settings,
     },
     template: {
-      ...data.template,
+      ...defaultData.template,
+      ...(data.template ?? {}),
       days,
     },
   };
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function parseJsonImport(raw: string, userId: string): JsonImportResult {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'Import file is not valid JSON.' };
+  }
+
+  if (!isObject(parsed) || parsed.version !== JSON_EXPORT_VERSION) {
+    return { ok: false, error: 'Import file must be an ExerciseTracker JSON export version 1.' };
+  }
+
+  if (!isObject(parsed.data)) {
+    return { ok: false, error: 'Import file does not contain ExerciseTracker data.' };
+  }
+
+  try {
+    return { ok: true, data: normalizeLocalData(parsed.data as Partial<AppData>, userId) };
+  } catch {
+    return { ok: false, error: 'Import file could not be restored.' };
+  }
+}
+
 export function saveLocalData(data: AppData): void {
   localStorage.setItem(storageKey(data.userId), JSON.stringify(data));
+}
+
+export function resetLocalData(userId: string): AppData {
+  const data = createDefaultAppData(userId);
+  saveLocalData(data);
+  return data;
 }
 
 export function clearLocalData(userId: string): void {

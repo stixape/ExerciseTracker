@@ -13,6 +13,7 @@ import {
   Palette,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Settings,
   SkipForward,
@@ -20,11 +21,13 @@ import {
   TimerReset,
   Trash2,
   Undo2,
+  Upload,
 } from 'lucide-react';
 import { detectPlateaus } from './domain/analytics';
 import { getTemplateDayForToday } from './domain/calendar';
 import { createJsonExport, createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
+import { createDefaultAppData } from './domain/sampleData';
 import { formatDuration } from './domain/rest';
 import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet } from './domain/session';
 import type {
@@ -40,8 +43,8 @@ import type {
 } from './domain/types';
 import { validateSetValues } from './domain/validation';
 import { playRestAlarm, primeAlarmAudio } from './lib/alarm';
-import { clearActiveWorkout, loadActiveWorkout, queueCompletedSession, saveActiveWorkout } from './lib/offlineDb';
-import { loadLocalData, saveLocalData } from './lib/localData';
+import { clearActiveWorkout, loadActiveWorkout, queueCompletedSession, resetOfflineData, saveActiveWorkout } from './lib/offlineDb';
+import { loadLocalData, parseJsonImport, saveLocalData } from './lib/localData';
 
 const LOCAL_USER_ID = 'local-user';
 
@@ -1236,6 +1239,7 @@ function SettingsPage() {
   const { data, saveData } = useTracker();
   const [bandName, setBandName] = useState('');
   const [bandHex, setBandHex] = useState('#6f42c1');
+  const [dataMessage, setDataMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
   const isDarkMode = data.settings.theme === 'dark';
 
   function addBand() {
@@ -1245,6 +1249,31 @@ function SettingsPage() {
       bandColours: [...current.bandColours, { id: createId('band'), name: bandName.trim(), hex: bandHex }],
     }));
     setBandName('');
+  }
+
+  async function importJsonFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    const result = parseJsonImport(await file.text(), LOCAL_USER_ID);
+    if (!result.ok) {
+      setDataMessage({ tone: 'error', text: result.error });
+      return;
+    }
+
+    await resetOfflineData(LOCAL_USER_ID);
+    saveData(() => result.data);
+    setDataMessage({ tone: 'success', text: 'JSON import restored.' });
+  }
+
+  async function resetData() {
+    const confirmed = window.confirm('Reset all local ExerciseTracker data on this device? This removes workouts, plan edits, active workout progress, and band colours.');
+    if (!confirmed) return;
+
+    await resetOfflineData(LOCAL_USER_ID);
+    saveData(() => createDefaultAppData(LOCAL_USER_ID));
+    setDataMessage({ tone: 'success', text: 'Local data reset.' });
   }
 
   return (
@@ -1319,8 +1348,9 @@ function SettingsPage() {
 
       <section className="section-block">
         <div className="section-heading">
-          <h2>Export</h2>
+          <h2>Data</h2>
         </div>
+        {dataMessage && <p className={dataMessage.tone === 'error' ? 'form-message' : 'success-message'}>{dataMessage.text}</p>}
         <div className="export-actions">
           <button className="secondary-button" type="button" onClick={() => downloadTextFile('exercise-tracker-export.json', createJsonExport(data), 'application/json')}>
             <Download size={18} />
@@ -1329,6 +1359,15 @@ function SettingsPage() {
           <button className="secondary-button" type="button" onClick={() => downloadTextFile('exercise-tracker-sessions.csv', createCsvExport(data.sessions), 'text/csv')}>
             <Download size={18} />
             CSV
+          </button>
+          <label className="file-button">
+            <Upload size={18} />
+            Import JSON
+            <input type="file" accept="application/json,.json" aria-label="Import JSON export" onChange={importJsonFile} />
+          </label>
+          <button className="ghost-button danger" type="button" onClick={resetData}>
+            <RotateCcw size={18} />
+            Reset
           </button>
         </div>
       </section>

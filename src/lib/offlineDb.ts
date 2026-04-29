@@ -48,3 +48,11 @@ export async function queueCompletedSession(item: QueuedSyncItem): Promise<void>
 export async function listQueuedSessions(userId: string): Promise<QueuedSyncItem[]> {
   return offlineDb.syncQueue.where('userId').equals(userId).toArray();
 }
+
+export async function clearQueuedSessions(userId: string): Promise<void> {
+  await offlineDb.syncQueue.where('userId').equals(userId).delete();
+}
+
+export async function resetOfflineData(userId: string): Promise<void> {
+  await Promise.all([clearActiveWorkout(userId), clearQueuedSessions(userId)]);
+}

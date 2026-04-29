@@ -225,6 +225,12 @@ small {
   font-size: 0.9rem;
 }
 
+.success-message {
+  color: var(--primary);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .app-shell {
   min-height: 100vh;
   padding-bottom: calc(5.4rem + env(safe-area-inset-bottom));
@@ -327,6 +333,7 @@ small {
 .ghost-button,
 .text-button,
 .icon-text-button,
+.file-button,
 .small-button,
 .complete-button,
 .undo-button {
@@ -353,10 +360,23 @@ small {
 
 .ghost-button,
 .icon-text-button,
+.file-button,
 .small-button {
   background: var(--surface);
   color: var(--primary);
   border-color: var(--line);
+}
+
+.file-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .text-button {
