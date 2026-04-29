@@ -1,4 +1,4 @@
-const CACHE_NAME = 'exercise-tracker-v1';
+const CACHE_NAME = 'exercise-tracker-v2';
 const SCOPE_URL = new URL(self.registration.scope);
 const APP_SHELL = [
   new URL('.', SCOPE_URL).pathname,
@@ -8,8 +8,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -21,20 +20,40 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+async function fromNetwork(request) {
+  const response = await fetch(request);
+  if (response.ok) {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
+async function networkFirst(request) {
+  try {
+    return await fromNetwork(request);
+  } catch {
+    return (await caches.match(request)) ?? (await caches.match(new URL('.', SCOPE_URL).pathname)) ?? (await caches.match(new URL('index.html', SCOPE_URL).pathname));
+  }
+}
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  return fromNetwork(request);
+}
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
 
-      return fetch(event.request)
-        .then((response) => {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return response;
-        })
-        .catch(() => caches.match(new URL('index.html', SCOPE_URL).pathname));
-    }),
-  );
+  const acceptsHtml = event.request.headers.get('accept')?.includes('text/html') ?? false;
+  if (event.request.mode === 'navigate' || acceptsHtml) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  event.respondWith(cacheFirst(event.request));
 });
