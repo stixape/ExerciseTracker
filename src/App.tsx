@@ -678,6 +678,7 @@ function WorkoutPage() {
       bandColours={data.bandColours}
       onActualChange={(actual) => updateActual(currentSet.id, actual)}
       onComplete={(progression) => completeWorkoutSet(currentSet, progression)}
+      onExit={() => navigate('/')}
     />
   );
 }
@@ -757,6 +758,7 @@ function ActiveSetScreen({
   bandColours,
   onActualChange,
   onComplete,
+  onExit,
 }: {
   set: SessionSet;
   session: WorkoutSession;
@@ -764,6 +766,7 @@ function ActiveSetScreen({
   bandColours: BandColour[];
   onActualChange: (values: SetValues) => void;
   onComplete: (progression?: PlannedSetProgression) => void;
+  onExit: () => void;
 }) {
   const [progression, setProgression] = useState<PlannedSetProgression>(() => getInitialProgression(set));
 
@@ -784,10 +787,15 @@ function ActiveSetScreen({
         <TargetSummary set={set} bandColours={bandColours} />
         <ActualSetEditor set={set} bandColours={bandColours} progression={progression} onChange={onActualChange} onProgressionChange={setProgression} />
 
-        <button className="complete-button focused-complete-button" type="button" onClick={() => onComplete(progression)}>
-          <Check size={18} />
-          Complete set
-        </button>
+        <div className="active-set-actions">
+          <button className="complete-button focused-complete-button" type="button" onClick={() => onComplete(progression)}>
+            <Check size={18} />
+            Complete set
+          </button>
+          <button className="ghost-button focused-exit-button" type="button" onClick={onExit}>
+            Exit Workout
+          </button>
+        </div>
       </article>
     </section>
   );
@@ -862,6 +870,7 @@ function ActualSetEditor({
   if (set.mode === 'band_reps') {
     return (
       <section className="actual-editor">
+        <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
         <p className="eyebrow">Plan progression</p>
         <div className="band-picker" aria-label="New band">
           {bandColours.map((band) => {
@@ -884,18 +893,19 @@ function ActualSetEditor({
             );
           })}
         </div>
-        <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
       </section>
     );
   }
 
   return (
     <section className="actual-editor weighted-actual-editor">
+      <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
       <label className="compact-field">
         New weight
         <input
           className="numeric-input"
           style={getNumericInputStyle(progression.weightKg)}
+          aria-label="New weight"
           type="number"
           min={0}
           step={0.5}
@@ -903,7 +913,6 @@ function ActualSetEditor({
           onChange={(event) => patchProgression({ weightKg: parseOptionalNumber(event.target.value) })}
         />
       </label>
-      <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
     </section>
   );
 }

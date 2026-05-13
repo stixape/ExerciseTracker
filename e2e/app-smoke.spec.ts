@@ -47,6 +47,26 @@ test('workout flow creates rest UI and saves a completed session', async ({ page
   await expect(page.getByLabel('Attained reps').locator('option')).toHaveCount(6);
   await expect(page.getByLabel('New weight')).toBeVisible();
   await expect(page.getByLabel('Attained weight')).toHaveCount(0);
+  const repsBox = await page.getByLabel('Attained reps').boundingBox();
+  const newWeightBox = await page.getByLabel('New weight').boundingBox();
+  expect(repsBox).not.toBeNull();
+  expect(newWeightBox).not.toBeNull();
+  expect(newWeightBox!.y).toBeGreaterThan(repsBox!.y);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const reps = document.querySelector('[aria-label="Attained reps"]');
+        const newWeight = document.querySelector('[aria-label="New weight"]');
+        if (!reps || !newWeight) return false;
+        return Boolean(reps.compareDocumentPosition(newWeight) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }),
+    )
+    .toBe(true);
+  await page.getByRole('button', { name: 'Exit Workout' }).click();
+  await expect(page.locator('main h1')).toHaveText(/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Workout/);
+  await expect(page.getByText('Workout in progress')).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.getByText('Current set')).toBeVisible();
   await page.getByLabel('New weight').fill('62.5');
 
   for (let index = 0; index < 15; index += 1) {
