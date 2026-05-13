@@ -1,9 +1,10 @@
-const CACHE_NAME = 'exercise-tracker-v2';
+const CACHE_NAME = 'exercise-tracker-v3';
 const SCOPE_URL = new URL(self.registration.scope);
 const APP_SHELL = [
   new URL('.', SCOPE_URL).pathname,
   new URL('index.html', SCOPE_URL).pathname,
   new URL('manifest.webmanifest', SCOPE_URL).pathname,
+  new URL('alarm_sound.wav', SCOPE_URL).pathname,
   new URL('icons/icon.svg', SCOPE_URL).pathname,
 ];
 

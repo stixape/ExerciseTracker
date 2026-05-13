@@ -236,6 +236,10 @@ small {
   padding-bottom: calc(5.4rem + env(safe-area-inset-bottom));
 }
 
+.workout-focus-shell {
+  padding-bottom: 0;
+}
+
 .top-bar {
   position: sticky;
   top: 0;
@@ -288,6 +292,12 @@ small {
   width: min(1120px, 100%);
   margin: 0 auto;
   padding: 1rem;
+}
+
+.workout-focus-main {
+  width: 100%;
+  min-height: 100vh;
+  padding: 0;
 }
 
 .demo-banner {
@@ -717,6 +727,167 @@ small {
   font-size: 1.35rem;
 }
 
+.focused-workout-screen {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: calc(1.1rem + env(safe-area-inset-top)) 1rem calc(1.1rem + env(safe-area-inset-bottom));
+}
+
+.rest-screen {
+  align-content: center;
+  gap: 1.35rem;
+  background: var(--hero-bg);
+  color: var(--hero-ink);
+  text-align: center;
+}
+
+.rest-screen p,
+.rest-screen span,
+.rest-screen .eyebrow {
+  color: var(--hero-muted);
+}
+
+.rest-countdown {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+}
+
+.rest-countdown strong {
+  font-size: clamp(4.25rem, 18vw, 8.5rem);
+  line-height: 0.9;
+  font-weight: 900;
+}
+
+.next-up-panel {
+  width: min(100%, 30rem);
+  display: grid;
+  gap: 0.55rem;
+  padding: 1.15rem;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 8%);
+}
+
+.next-up-panel h1 {
+  font-size: clamp(2rem, 7vw, 3.1rem);
+}
+
+.next-up-panel strong {
+  font-size: 1.2rem;
+}
+
+.rest-skip-button {
+  width: min(100%, 20rem);
+}
+
+.active-set-screen {
+  align-content: center;
+  background: var(--page-bg);
+}
+
+.active-set-panel {
+  width: min(100%, 34rem);
+  display: grid;
+  gap: 1rem;
+}
+
+.active-set-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.active-set-heading h1 {
+  margin-bottom: 0.4rem;
+  font-size: clamp(2.1rem, 9vw, 3.45rem);
+}
+
+.active-set-index {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.target-summary {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.target-summary.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.value-tile {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.value-tile span,
+.wheel-field span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.value-tile strong {
+  overflow-wrap: anywhere;
+  font-size: 1.55rem;
+}
+
+.actual-editor {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.weighted-actual-editor {
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 0.9fr);
+  align-items: end;
+}
+
+.wheel-field {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.wheel-picker {
+  height: 9rem;
+  padding: 0.35rem;
+  overflow-y: auto;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 850;
+}
+
+.wheel-picker option {
+  padding: 0.38rem;
+}
+
+.focused-complete-button {
+  min-height: 3.4rem;
+  font-size: 1rem;
+}
+
 .chart-section {
   min-height: 19rem;
 }
@@ -1031,6 +1202,10 @@ small {
   .demo-banner {
     padding-left: 7.2rem;
   }
+
+  .workout-focus-main {
+    padding: 0;
+  }
 }
 
 @media (max-width: 430px) {
@@ -1043,6 +1218,11 @@ small {
   }
 
   .rest-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .target-summary.two,
+  .weighted-actual-editor {
     grid-template-columns: 1fr;
   }
 

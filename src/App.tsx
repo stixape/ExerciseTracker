@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
   BarChart3,
@@ -14,13 +14,11 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Save,
   Settings,
   SkipForward,
   Sun,
   TimerReset,
   Trash2,
-  Undo2,
   Upload,
 } from 'lucide-react';
 import { detectPlateaus } from './domain/analytics';
@@ -29,7 +27,7 @@ import { createJsonExport, createCsvExport, downloadTextFile } from './domain/ex
 import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
 import { formatDuration } from './domain/rest';
-import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet } from './domain/session';
+import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent } from './domain/session';
 import type {
   ActiveRest,
   AppData,
@@ -42,6 +40,15 @@ import type {
   WorkoutSession,
 } from './domain/types';
 import { validateSetValues } from './domain/validation';
+import {
+  applySetProgression,
+  formatSetPreparation,
+  formatSetTarget,
+  getCurrentSessionSet,
+  getRepWheelMax,
+  getWheelValues,
+  type PlannedSetProgression,
+} from './domain/workoutFlow';
 import { playRestAlarm, primeAlarmAudio } from './lib/alarm';
 import { clearActiveWorkout, loadActiveWorkout, queueCompletedSession, resetOfflineData, saveActiveWorkout } from './lib/offlineDb';
 import { loadLocalData, parseJsonImport, saveLocalData } from './lib/localData';
@@ -107,22 +114,26 @@ function TrackerProvider() {
 
 function AppShell() {
   const { data } = useTracker();
+  const location = useLocation();
   const todayDay = getTemplateDayForToday(data.template);
   const workoutPath = todayDay ? `/workout/${todayDay.id}` : '/workout';
+  const hideWorkoutChrome = Boolean(data.activeWorkout && location.pathname.startsWith('/workout'));
 
   return (
-    <div className="app-shell">
-      <header className="top-bar">
-        <NavLink to="/" className="brand-link" aria-label="ExerciseTracker home">
-          <span className="brand-mark">
-            <Dumbbell size={24} />
-          </span>
-          <span>ExerciseTracker</span>
-        </NavLink>
-        <span className="storage-pill">Local-first</span>
-      </header>
+    <div className={hideWorkoutChrome ? 'app-shell workout-focus-shell' : 'app-shell'}>
+      {!hideWorkoutChrome && (
+        <header className="top-bar">
+          <NavLink to="/" className="brand-link" aria-label="ExerciseTracker home">
+            <span className="brand-mark">
+              <Dumbbell size={24} />
+            </span>
+            <span>ExerciseTracker</span>
+          </NavLink>
+          <span className="storage-pill">Local-first</span>
+        </header>
+      )}
 
-      <main className="main-content">
+      <main className={hideWorkoutChrome ? 'main-content workout-focus-main' : 'main-content'}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/plan" element={<PlanPage />} />
@@ -133,13 +144,15 @@ function AppShell() {
         </Routes>
       </main>
 
-      <nav className="bottom-nav" aria-label="Primary">
-        <NavItem to="/" icon={<Home size={20} />} label="Home" />
-        <NavItem to="/plan" icon={<Dumbbell size={20} />} label="Plan" />
-        <NavItem to={workoutPath} icon={<Activity size={20} />} label="Workout" />
-        <NavItem to="/progress" icon={<BarChart3 size={20} />} label="Progress" />
-        <NavItem to="/settings" icon={<Settings size={20} />} label="Settings" />
-      </nav>
+      {!hideWorkoutChrome && (
+        <nav className="bottom-nav" aria-label="Primary">
+          <NavItem to="/" icon={<Home size={20} />} label="Home" />
+          <NavItem to="/plan" icon={<Dumbbell size={20} />} label="Plan" />
+          <NavItem to={workoutPath} icon={<Activity size={20} />} label="Workout" />
+          <NavItem to="/progress" icon={<BarChart3 size={20} />} label="Progress" />
+          <NavItem to="/settings" icon={<Settings size={20} />} label="Settings" />
+        </nav>
+      )}
     </div>
   );
 }
@@ -461,7 +474,6 @@ function WorkoutPage() {
   const { dayId } = useParams();
   const { data, saveData } = useTracker();
   const navigate = useNavigate();
-  const [selectedExerciseIndex, setSelectedExerciseIndex] = useState<number | undefined>();
   const day = dayId ? data.template.days.find((item) => item.id === dayId) : getTemplateDayForToday(data.template);
   const activeWorkout = data.activeWorkout;
   const routeActiveWorkout = !dayId || activeWorkout?.session.templateDayId === dayId ? activeWorkout : undefined;
@@ -501,38 +513,51 @@ function WorkoutPage() {
     });
   }
 
-  function completeWorkoutSet(set: SessionSet) {
+  function completeWorkoutSet(set: SessionSet, progression?: PlannedSetProgression) {
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
       window.alert(errors.join('\n'));
       return;
     }
 
+    const shouldReturnHome = Boolean(completeSessionIfDone(completeSet(session!, set.id, set.actual)).completedAt);
+
     saveData((current) => {
       if (!current.activeWorkout) return current;
       const completed = completeSet(current.activeWorkout.session, set.id, set.actual);
       const activeRest = createActiveRest(completed, set.id);
+      const completedSession = completeSessionIfDone(completed);
+      const completedSet = completedSession.sets.find((item) => item.id === set.id) ?? set;
+      const template = applySetProgression(current.template, completedSession, completedSet, progression);
+
+      if (completedSession.completedAt && !activeRest) {
+        void queueCompletedSession({
+          id: createId('sync'),
+          userId: current.userId,
+          createdAt: new Date().toISOString(),
+          type: 'session_completed',
+          payload: completedSession,
+        });
+
+        return {
+          ...current,
+          template,
+          sessions: [completedSession, ...current.sessions],
+          activeWorkout: undefined,
+        };
+      }
+
       return {
         ...current,
+        template,
         activeWorkout: {
-          session: completeSessionIfDone(completed),
+          session: completedSession,
           activeRest,
         },
       };
     });
-  }
 
-  function uncompleteWorkoutSet(set: SessionSet) {
-    saveData((current) => {
-      if (!current.activeWorkout) return current;
-      return {
-        ...current,
-        activeWorkout: {
-          session: uncompleteSet(current.activeWorkout.session, set.id),
-          activeRest: undefined,
-        },
-      };
-    });
+    if (shouldReturnHome) navigate('/');
   }
 
   function updateRest(updater: (session: WorkoutSession, rest: ActiveRest) => { session: WorkoutSession; activeRest?: ActiveRest }) {
@@ -549,25 +574,11 @@ function WorkoutPage() {
     });
   }
 
-  function finishWorkout() {
-    saveData((current) => {
-      const completed = current.activeWorkout?.session;
-      if (!completed?.completedAt) return current;
-      void queueCompletedSession({
-        id: createId('sync'),
-        userId: current.userId,
-        createdAt: new Date().toISOString(),
-        type: 'session_completed',
-        payload: completed,
-      });
-
-      return {
-        ...current,
-        sessions: [completed, ...current.sessions],
-        activeWorkout: undefined,
-      };
-    });
-    navigate('/progress');
+  function finishRest(skipped: boolean) {
+    updateRest((currentSession, rest) => ({
+      session: logRestEvent(currentSession, rest, skipped),
+      activeRest: undefined,
+    }));
   }
 
   if (!session && day) {
@@ -633,135 +644,42 @@ function WorkoutPage() {
   }
 
   const completedCount = session.sets.filter((set) => set.completedAt).length;
-  const isComplete = completedCount === session.sets.length;
-  const currentExerciseIndex = getCurrentExerciseIndex(session, selectedExerciseIndex);
-  const currentExercise = session.snapshot.exercises[currentExerciseIndex];
-  const currentSets = session.sets.filter((set) => set.exerciseIndex === currentExerciseIndex);
+  const currentSet = getCurrentSessionSet(session);
 
-  return (
-    <div className="page-stack workout-page">
-      <section className="workout-header">
-        <div>
-          <p className="eyebrow">Active workout</p>
-          <h1>{session.label}</h1>
-          <p>
-            {completedCount} of {session.sets.length} sets completed
-          </p>
-        </div>
-        {isComplete && (
-          <button className="primary-button" type="button" onClick={finishWorkout}>
-            <Save size={18} />
-            Finish
-          </button>
-        )}
-      </section>
-
-      {activeWorkout?.activeRest && (
-        <RestPanel
-          rest={activeWorkout.activeRest}
-          session={session}
-          onSkip={() =>
-            updateRest((currentSession, rest) => ({
-              session: logRestEvent(currentSession, rest, true),
-              activeRest: undefined,
-            }))
-          }
-          onComplete={() =>
-            updateRest((currentSession, rest) => ({
-              session: rest.completed ? currentSession : logRestEvent(currentSession, rest, false),
-              activeRest: { ...rest, completed: true },
-            }))
-          }
-          onDismiss={() =>
-            updateRest((currentSession) => ({
-              session: currentSession,
-              activeRest: undefined,
-            }))
-          }
-        />
-      )}
-
-      <ExerciseProgressStrip session={session} currentExerciseIndex={currentExerciseIndex} onSelect={setSelectedExerciseIndex} />
-
-      {currentExercise && (
-        <article className="exercise-card current-exercise-card">
-          <div className="workout-exercise-heading">
-            <span className="exercise-index">{currentExerciseIndex + 1}</span>
-            <div>
-              <p className="eyebrow">Current exercise</p>
-              <h2>{currentExercise.name}</h2>
-              <small>{currentExerciseIndex === 0 ? '3 minute rests' : '2 minute rests'}</small>
-            </div>
-          </div>
-
-          <div className="workout-set-list">
-            {currentSets.map((set) => (
-              <div className={set.completedAt ? 'workout-set complete' : 'workout-set'} key={set.id}>
-                <div className="set-title">
-                  <strong>Set {set.setNumber}</strong>
-                  {set.completedAt && <Check size={18} />}
-                </div>
-                <SetValueEditor mode={set.mode} values={set.actual} bandColours={data.bandColours} onChange={(actual) => updateActual(set.id, actual)} disabled={Boolean(set.completedAt)} />
-                {set.completedAt ? (
-                  <button className="undo-button" type="button" onClick={() => uncompleteWorkoutSet(set)}>
-                    <Undo2 size={17} />
-                    Uncomplete
-                  </button>
-                ) : (
-                  <button className="complete-button" type="button" onClick={() => completeWorkoutSet(set)}>
-                    <Check size={17} />
-                    Complete set
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </article>
-      )}
-    </div>
-  );
-}
-
-function ExerciseProgressStrip({
-  session,
-  currentExerciseIndex,
-  onSelect,
-}: {
-  session: WorkoutSession;
-  currentExerciseIndex: number;
-  onSelect: (exerciseIndex: number) => void;
-}) {
-  return (
-    <section className="exercise-progress" aria-label="Exercise progress">
-      {session.snapshot.exercises.map((exercise, index) => {
-        const sets = session.sets.filter((set) => set.exerciseIndex === index);
-        const isDone = sets.every((set) => set.completedAt);
-        const isCurrent = index === currentExerciseIndex;
-        return (
-          <button className={isCurrent ? 'exercise-step current' : isDone ? 'exercise-step done' : 'exercise-step'} key={exercise.id} type="button" onClick={() => onSelect(index)}>
-            <span>{index + 1}</span>
-            <strong>{exercise.name}</strong>
-            <small>
-              {sets.filter((set) => set.completedAt).length}/{sets.length}
-            </small>
-          </button>
-        );
-      })}
-    </section>
-  );
-}
-
-function getCurrentExerciseIndex(session: WorkoutSession, selectedExerciseIndex?: number): number {
-  if (selectedExerciseIndex !== undefined) {
-    const selectedSets = session.sets.filter((set) => set.exerciseIndex === selectedExerciseIndex);
-    if (selectedSets.some((set) => !set.completedAt) || session.sets.every((set) => set.completedAt)) {
-      return selectedExerciseIndex;
-    }
+  if (activeWorkout?.activeRest) {
+    return (
+      <RestScreen
+        rest={activeWorkout.activeRest}
+        session={session}
+        bandColours={data.bandColours}
+        onSkip={() => finishRest(true)}
+        onComplete={() => finishRest(false)}
+      />
+    );
   }
 
-  const firstIncompleteSet = session.sets.find((set) => !set.completedAt);
-  if (firstIncompleteSet) return firstIncompleteSet.exerciseIndex;
-  return Math.max(0, session.snapshot.exercises.length - 1);
+  if (!currentSet) {
+    return (
+      <div className="focused-workout-screen active-set-screen">
+        <section className="active-set-panel">
+          <p className="eyebrow">Workout complete</p>
+          <h1>{session.label}</h1>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <ActiveSetScreen
+      key={currentSet.id}
+      set={currentSet}
+      session={session}
+      completedCount={completedCount}
+      bandColours={data.bandColours}
+      onActualChange={(actual) => updateActual(currentSet.id, actual)}
+      onComplete={(progression) => completeWorkoutSet(currentSet, progression)}
+    />
+  );
 }
 
 function getNumericInputStyle(value: number | undefined): React.CSSProperties {
@@ -774,29 +692,29 @@ function parseOptionalNumber(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function RestPanel({
+function RestScreen({
   rest,
   session,
+  bandColours,
   onSkip,
   onComplete,
-  onDismiss,
 }: {
   rest: ActiveRest;
   session: WorkoutSession;
+  bandColours: BandColour[];
   onSkip: () => void;
   onComplete: () => void;
-  onDismiss: () => void;
 }) {
   const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil((new Date(rest.endsAt).getTime() - Date.now()) / 1000)));
+  const alarmPlayedRef = useRef(false);
   const nextSet = session.sets.find((set) => set.id === rest.nextSetId);
 
   useEffect(() => {
-    if (rest.completed) return;
-
     const interval = window.setInterval(() => {
       const nextRemaining = Math.max(0, Math.ceil((new Date(rest.endsAt).getTime() - Date.now()) / 1000));
       setRemaining(nextRemaining);
-      if (nextRemaining === 0) {
+      if (nextRemaining === 0 && !alarmPlayedRef.current) {
+        alarmPlayedRef.current = true;
         window.clearInterval(interval);
         playRestAlarm();
         onComplete();
@@ -804,29 +722,206 @@ function RestPanel({
     }, 250);
 
     return () => window.clearInterval(interval);
-  }, [onComplete, rest.completed, rest.endsAt]);
+  }, [onComplete, rest.endsAt]);
 
   return (
-    <section className={rest.completed ? 'rest-panel done' : 'rest-panel'}>
-      <div className="rest-timer">
-        <Clock3 size={24} />
-        <strong>{rest.completed ? 'Ready' : formatDuration(remaining)}</strong>
+    <section className="focused-workout-screen rest-screen" aria-label="Rest period">
+      <div className="rest-countdown">
+        <Clock3 size={34} />
+        <p className="eyebrow">Rest period</p>
+        <strong>{formatDuration(remaining)}</strong>
       </div>
-      <div>
-        <p className="eyebrow">{rest.completed ? 'Rest complete' : 'Recovery'}</p>
-        <h2>{nextSet ? `${nextSet.exerciseName} - Set ${nextSet.setNumber}` : 'Next set'}</h2>
+      <div className="next-up-panel">
+        <p className="eyebrow">Next up</p>
+        <h1>{nextSet ? nextSet.exerciseName : 'Next set'}</h1>
+        {nextSet && (
+          <>
+            <p>Set {nextSet.setNumber}</p>
+            <strong>{formatSetPreparation(nextSet, bandColours)}</strong>
+            <span>Target: {formatSetTarget(nextSet, bandColours)}</span>
+          </>
+        )}
       </div>
-      {rest.completed ? (
-        <button className="primary-button" type="button" onClick={onDismiss}>
-          Begin set
-        </button>
-      ) : (
-        <button className="ghost-button" type="button" onClick={onSkip}>
-          <SkipForward size={17} />
-          Skip
-        </button>
-      )}
+      <button className="primary-button rest-skip-button" type="button" onClick={onSkip}>
+        <SkipForward size={17} />
+        Skip
+      </button>
     </section>
+  );
+}
+
+function ActiveSetScreen({
+  set,
+  session,
+  completedCount,
+  bandColours,
+  onActualChange,
+  onComplete,
+}: {
+  set: SessionSet;
+  session: WorkoutSession;
+  completedCount: number;
+  bandColours: BandColour[];
+  onActualChange: (values: SetValues) => void;
+  onComplete: (progression?: PlannedSetProgression) => void;
+}) {
+  const [progression, setProgression] = useState<PlannedSetProgression>(() => getInitialProgression(set));
+
+  return (
+    <section className="focused-workout-screen active-set-screen">
+      <article className="active-set-panel">
+        <div className="active-set-heading">
+          <div>
+            <p className="eyebrow">Current set</p>
+            <h1>{set.exerciseName}</h1>
+            <p>
+              Set {set.setNumber} of {session.snapshot.exercises[set.exerciseIndex]?.sets.length ?? set.setNumber}
+            </p>
+          </div>
+          <span className="active-set-index">{completedCount + 1}</span>
+        </div>
+
+        <TargetSummary set={set} bandColours={bandColours} />
+        <ActualSetEditor set={set} bandColours={bandColours} progression={progression} onChange={onActualChange} onProgressionChange={setProgression} />
+
+        <button className="complete-button focused-complete-button" type="button" onClick={() => onComplete(progression)}>
+          <Check size={18} />
+          Complete set
+        </button>
+      </article>
+    </section>
+  );
+}
+
+function getInitialProgression(set: SessionSet): PlannedSetProgression {
+  if (set.mode === 'weighted_reps') return { weightKg: set.target.weightKg };
+  if (set.mode === 'band_reps') return { bandColourIds: [...(set.target.bandColourIds ?? [])] };
+  return {};
+}
+
+function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: BandColour[] }) {
+  if (set.mode === 'timed_hold') {
+    return (
+      <section className="target-summary" aria-label="Target">
+        <ValueTile label="Target time" value={`${set.target.seconds ?? 0}s`} />
+      </section>
+    );
+  }
+
+  if (set.mode === 'band_reps') {
+    return (
+      <section className="target-summary two" aria-label="Target">
+        <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
+        <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="target-summary two" aria-label="Target">
+      <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
+      <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+    </section>
+  );
+}
+
+function ValueTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="value-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ActualSetEditor({
+  set,
+  bandColours,
+  progression,
+  onChange,
+  onProgressionChange,
+}: {
+  set: SessionSet;
+  bandColours: BandColour[];
+  progression: PlannedSetProgression;
+  onChange: (values: SetValues) => void;
+  onProgressionChange: (values: PlannedSetProgression) => void;
+}) {
+  function patch(next: Partial<SetValues>) {
+    onChange({ ...set.actual, ...next });
+  }
+
+  function patchProgression(next: Partial<PlannedSetProgression>) {
+    onProgressionChange({ ...progression, ...next });
+  }
+
+  if (set.mode === 'timed_hold') {
+    return <WheelPicker label="Attained seconds" value={set.actual.seconds ?? 0} max={300} onChange={(seconds) => patch({ seconds })} />;
+  }
+
+  if (set.mode === 'band_reps') {
+    return (
+      <section className="actual-editor">
+        <p className="eyebrow">Plan progression</p>
+        <div className="band-picker" aria-label="New band">
+          {bandColours.map((band) => {
+            const active = progression.bandColourIds?.includes(band.id) ?? false;
+            return (
+              <button
+                key={band.id}
+                type="button"
+                className={active ? 'band-swatch active' : 'band-swatch'}
+                style={{ '--band-color': band.hex } as React.CSSProperties}
+                aria-label={band.name}
+                title={band.name}
+                onClick={() => {
+                  const current = progression.bandColourIds ?? [];
+                  patchProgression({
+                    bandColourIds: active ? current.filter((id) => id !== band.id) : [...current, band.id],
+                  });
+                }}
+              />
+            );
+          })}
+        </div>
+        <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="actual-editor weighted-actual-editor">
+      <label className="compact-field">
+        New weight
+        <input
+          className="numeric-input"
+          style={getNumericInputStyle(progression.weightKg)}
+          type="number"
+          min={0}
+          step={0.5}
+          value={progression.weightKg ?? ''}
+          onChange={(event) => patchProgression({ weightKg: parseOptionalNumber(event.target.value) })}
+        />
+      </label>
+      <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
+    </section>
+  );
+}
+
+function WheelPicker({ label, value, max, onChange }: { label: string; value: number; max: number; onChange: (value: number) => void }) {
+  const options = value > max ? [...getWheelValues(max), value] : getWheelValues(max);
+
+  return (
+    <label className="wheel-field">
+      <span>{label}</span>
+      <select className="wheel-picker" size={5} aria-label={label} value={String(value)} onChange={(event) => onChange(Number(event.target.value))}>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

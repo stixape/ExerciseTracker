@@ -26,9 +26,6 @@ test('primary navigation reaches each major view', async ({ page }) => {
   await page.getByRole('link', { name: 'Plan' }).click();
   await expect(page.getByRole('heading', { name: 'Weekly workouts' })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Workout' }).click();
-  await expect(page.getByText(/sets completed/i)).toBeVisible();
-
   await page.getByRole('link', { name: 'Progress' }).click();
   await expect(page.getByRole('heading', { name: 'Exercise history' })).toBeVisible();
 
@@ -36,23 +33,54 @@ test('primary navigation reaches each major view', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Bands and data' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Home', exact: true }).click();
-  await expect(page.getByRole('heading', { name: /Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Workout/ })).toBeVisible();
+  await expect(page.locator('main h1')).toHaveText(/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Workout/);
+
+  await page.getByRole('link', { name: 'Workout' }).click();
+  await expect(page.getByText('Current set')).toBeVisible();
 });
 
 test('workout flow creates rest UI and saves a completed session', async ({ page }) => {
   await page.getByRole('link', { name: 'Workout' }).click();
-  await expect(page.getByText('0 of 15 sets completed')).toBeVisible();
+  await expect(page.getByText('Current set')).toBeVisible();
+  await expect(page.getByText('Target reps')).toBeVisible();
+  await expect(page.getByLabel('Attained reps')).toBeVisible();
+  await expect(page.getByLabel('Attained reps').locator('option')).toHaveCount(6);
+  await expect(page.getByLabel('New weight')).toBeVisible();
+  await expect(page.getByLabel('Attained weight')).toHaveCount(0);
+  await page.getByLabel('New weight').fill('62.5');
 
   for (let index = 0; index < 15; index += 1) {
     await page.getByRole('button', { name: 'Complete set' }).first().click();
 
     if (index < 14) {
-      await expect(page.getByText('Recovery')).toBeVisible();
+      if (index === 0) {
+        await expect
+          .poll(async () =>
+            page.evaluate(() => {
+              const raw = localStorage.getItem('exercise-tracker:data:local-user');
+              if (!raw) return undefined;
+              const data = JSON.parse(raw);
+              const activeWorkout = data.activeWorkout;
+              const completedSet = activeWorkout?.session.sets[0];
+              const day = data.template.days.find((item: { id: string }) => item.id === activeWorkout?.session.templateDayId);
+              const exercise = day?.exercises.find((item: { id: string }) => item.id === completedSet?.exerciseId);
+              const templateSet = exercise?.sets.find((item: { id: string }) => item.id === completedSet?.templateSetId);
+              return templateSet?.target.weightKg;
+            }),
+          )
+          .toBe(62.5);
+      }
+
+      await expect(page.getByText('Rest period')).toBeVisible();
+      await expect(page.getByText('Next up')).toBeVisible();
+      await expect(page.getByText(/^Target:/)).toBeVisible();
       await page.getByRole('button', { name: 'Skip' }).click();
+      await expect(page.getByText('Current set')).toBeVisible();
     }
   }
 
-  await page.getByRole('button', { name: 'Finish' }).click();
+  await expect(page.locator('main h1')).toHaveText(/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Workout/);
+  await page.getByRole('link', { name: 'Progress' }).click();
   await expect(page.getByRole('heading', { name: 'Exercise history' })).toBeVisible();
   await expect(page.getByText(/15 sets/)).toBeVisible();
 });
