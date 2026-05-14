@@ -64,14 +64,9 @@ export function applySetProgression(
 
 export function formatSetTarget(set: SessionSet, bandColours: BandColour[]): string {
   if (set.mode === 'timed_hold') return `${set.target.seconds ?? 0} seconds`;
-  if (set.mode === 'band_reps') return `${formatBandNames(set.target.bandColourIds ?? [], bandColours)} x ${set.target.reps ?? 0} reps`;
-  return `${set.target.weightKg ?? 0} kg x ${set.target.reps ?? 0} reps`;
-}
-
-export function formatSetPreparation(set: SessionSet, bandColours: BandColour[]): string {
-  if (set.mode === 'timed_hold') return `Prepare for ${set.target.seconds ?? 0} seconds`;
-  if (set.mode === 'band_reps') return `Prepare ${formatBandNames(set.target.bandColourIds ?? [], bandColours)} band`;
-  return `Prepare ${set.target.weightKg ?? 0} kg`;
+  const repsLabel = `${set.target.reps ?? 0} reps${set.tracksSides ? ' each side' : ''}`;
+  if (set.mode === 'band_reps') return `${formatBandNames(set.target.bandColourIds ?? [], bandColours)} x ${repsLabel}`;
+  return `${set.target.weightKg ?? 0} kg x ${repsLabel}`;
 }
 
 function formatBandNames(ids: string[], bandColours: BandColour[]): string {
@@ -84,6 +79,12 @@ function formatBandNames(ids: string[], bandColours: BandColour[]): string {
 
 function isSetTargetMet(set: SessionSet): boolean {
   if (set.mode === 'timed_hold') return (set.actual.seconds ?? 0) >= (set.target.seconds ?? 0);
+  if (set.tracksSides) {
+    const targetReps = set.target.reps ?? 0;
+    const leftReps = set.actual.leftReps ?? set.actual.reps ?? 0;
+    const rightReps = set.actual.rightReps ?? set.actual.reps ?? 0;
+    return leftReps >= targetReps && rightReps >= targetReps;
+  }
   return (set.actual.reps ?? 0) >= (set.target.reps ?? 0);
 }
 

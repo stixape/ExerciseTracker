@@ -93,7 +93,9 @@ test('workout flow creates rest UI and saves a completed session', async ({ page
 
       await expect(page.getByText('Rest period')).toBeVisible();
       await expect(page.getByText('Next up')).toBeVisible();
-      await expect(page.getByText(/^Target:/)).toBeVisible();
+      await expect(page.getByText(/Prepare/)).toHaveCount(0);
+      await expect(page.getByText(/^Target:/)).toHaveCount(0);
+      await expect(page.getByText(/^Set \d+/)).toBeVisible();
       await page.getByRole('button', { name: 'Skip' }).click();
       await expect(page.getByText('Current set')).toBeVisible();
     }
@@ -103,6 +105,44 @@ test('workout flow creates rest UI and saves a completed session', async ({ page
   await page.getByRole('link', { name: 'Progress' }).click();
   await expect(page.getByRole('heading', { name: 'Exercise history' })).toBeVisible();
   await expect(page.getByText(/15 sets/)).toBeVisible();
+});
+
+test('left and right reps can be tracked from the plan into the active set view', async ({ page }) => {
+  await page.getByRole('link', { name: 'Plan' }).click();
+
+  const firstExercise = page.locator('.exercise-card').first();
+  await firstExercise.getByLabel(/Track sides/i).check();
+  await expect(firstExercise.getByText('Set 6')).toBeVisible();
+
+  const dayId = await page.evaluate(() => {
+    const raw = localStorage.getItem('exercise-tracker:data:local-user');
+    if (!raw) throw new Error('Missing local workout data');
+    return JSON.parse(raw).template.days[0].id;
+  });
+
+  await page.goto(`/ExerciseTracker/workout/${dayId}`);
+  await expect(page.getByText('Current set')).toBeVisible();
+  await expect(page.getByText('Target reps each side')).toBeVisible();
+  await expect(page.getByLabel('Left reps')).toBeVisible();
+  await expect(page.getByLabel('Right reps')).toBeVisible();
+  await expect(page.getByLabel('Left reps').locator('option')).toHaveCount(6);
+
+  await page.getByLabel('Left reps').selectOption('4');
+  await page.getByLabel('Right reps').selectOption('5');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+
+  await expect(page.getByText('Rest period')).toBeVisible();
+  await expect(page.getByText('1:00')).toBeVisible();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = localStorage.getItem('exercise-tracker:data:local-user');
+        if (!raw) return undefined;
+        const data = JSON.parse(raw);
+        return data.activeWorkout?.session.sets[0].actual;
+      }),
+    )
+    .toMatchObject({ leftReps: 4, rightReps: 5, reps: 4 });
 });
 
 test('data tools expose exports and reject invalid imports without crashing', async ({ page }) => {

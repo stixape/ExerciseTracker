@@ -37,12 +37,12 @@ import type {
   SetValues,
   TemplateDay,
   TemplateExercise,
+  TemplateSet,
   WorkoutSession,
 } from './domain/types';
 import { validateSetValues } from './domain/validation';
 import {
   applySetProgression,
-  formatSetPreparation,
   formatSetTarget,
   getCurrentSessionSet,
   getRepWheelMax,
@@ -359,6 +359,32 @@ function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandCo
   };
 }
 
+function cloneSetValues(values: SetValues): SetValues {
+  return {
+    ...values,
+    bandColourIds: [...(values.bandColourIds ?? [])],
+  };
+}
+
+function ensureUnilateralSetCount(sets: TemplateSet[], mode: MetricMode, exerciseIndex: number, bandColours: BandColour[]): TemplateSet[] {
+  const nextSets = sets.map((set, index) => ({
+    ...set,
+    setNumber: index + 1,
+    target: cloneSetValues(set.target),
+  }));
+
+  while (nextSets.length < 6) {
+    const sourceTarget = nextSets.at(-1)?.target ?? getDefaultTargetForMode(mode, exerciseIndex, bandColours);
+    nextSets.push({
+      id: createId('template_set'),
+      setNumber: nextSets.length + 1,
+      target: cloneSetValues(sourceTarget),
+    });
+  }
+
+  return nextSets;
+}
+
 function PlanExerciseEditor({
   exercise,
   exerciseIndex,
@@ -376,10 +402,19 @@ function PlanExerciseEditor({
     onChange((current) => ({
       ...current,
       mode,
+      tracksSides: mode === 'timed_hold' ? undefined : current.tracksSides,
       sets: current.sets.map((set) => ({
         ...set,
         target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, set.target),
       })),
+    }));
+  }
+
+  function changeSideTracking(tracksSides: boolean) {
+    onChange((current) => ({
+      ...current,
+      tracksSides: tracksSides ? true : undefined,
+      sets: tracksSides ? ensureUnilateralSetCount(current.sets, current.mode, exerciseIndex, bandColours) : current.sets,
     }));
   }
 
@@ -404,6 +439,20 @@ function PlanExerciseEditor({
           Bands
         </button>
       </div>
+
+      {exercise.mode !== 'timed_hold' && (
+        <label className="switch-row exercise-option-row">
+          <span>
+            <strong>Left/right reps</strong>
+          </span>
+          <input
+            type="checkbox"
+            aria-label={`Track sides for ${exercise.name}`}
+            checked={Boolean(exercise.tracksSides)}
+            onChange={(event) => changeSideTracking(event.target.checked)}
+          />
+        </label>
+      )}
 
       <div className="set-grid">
         {exercise.sets.map((set) => (
@@ -514,6 +563,7 @@ function WorkoutPage() {
   }
 
   function completeWorkoutSet(set: SessionSet, progression?: PlannedSetProgression) {
+    primeAlarmAudio();
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
       window.alert(errors.join('\n'));
@@ -737,9 +787,8 @@ function RestScreen({
         <h1>{nextSet ? nextSet.exerciseName : 'Next set'}</h1>
         {nextSet && (
           <>
-            <p>Set {nextSet.setNumber}</p>
-            <strong>{formatSetPreparation(nextSet, bandColours)}</strong>
-            <span>Target: {formatSetTarget(nextSet, bandColours)}</span>
+            <strong>Set {nextSet.setNumber}</strong>
+            <span>{formatSetTarget(nextSet, bandColours)}</span>
           </>
         )}
       </div>
@@ -820,7 +869,7 @@ function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: Ban
     return (
       <section className="target-summary two" aria-label="Target">
         <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
-        <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+        <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
       </section>
     );
   }
@@ -828,7 +877,7 @@ function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: Ban
   return (
     <section className="target-summary two" aria-label="Target">
       <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
-      <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+      <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
     </section>
   );
 }
@@ -863,6 +912,26 @@ function ActualSetEditor({
     onProgressionChange({ ...progression, ...next });
   }
 
+  function patchSideReps(side: 'left' | 'right', value: number) {
+    const targetReps = set.target.reps ?? 0;
+    const leftReps = side === 'left' ? value : set.actual.leftReps ?? set.actual.reps ?? targetReps;
+    const rightReps = side === 'right' ? value : set.actual.rightReps ?? set.actual.reps ?? targetReps;
+    patch({
+      leftReps,
+      rightReps,
+      reps: Math.min(leftReps, rightReps),
+    });
+  }
+
+  const repControls = set.tracksSides ? (
+    <div className="side-rep-grid">
+      <WheelPicker label="Left reps" value={set.actual.leftReps ?? set.actual.reps ?? set.target.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patchSideReps('left', reps)} />
+      <WheelPicker label="Right reps" value={set.actual.rightReps ?? set.actual.reps ?? set.target.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patchSideReps('right', reps)} />
+    </div>
+  ) : (
+    <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
+  );
+
   if (set.mode === 'timed_hold') {
     return <WheelPicker label="Attained seconds" value={set.actual.seconds ?? 0} max={300} onChange={(seconds) => patch({ seconds })} />;
   }
@@ -870,7 +939,7 @@ function ActualSetEditor({
   if (set.mode === 'band_reps') {
     return (
       <section className="actual-editor">
-        <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
+        {repControls}
         <p className="eyebrow">Plan progression</p>
         <div className="band-picker" aria-label="New band">
           {bandColours.map((band) => {
@@ -899,7 +968,7 @@ function ActualSetEditor({
 
   return (
     <section className="actual-editor weighted-actual-editor">
-      <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
+      {repControls}
       <label className="compact-field">
         New weight
         <input
@@ -1304,7 +1373,7 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
   if (mode === 'weighted_reps') {
     const heaviest = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) - (a.actual.weightKg ?? 0))[0];
     const bestVolume = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) * (b.actual.reps ?? 0) - (a.actual.weightKg ?? 0) * (a.actual.reps ?? 0))[0];
-    return [`Load PB: ${heaviest.actual.weightKg ?? 0} kg x ${heaviest.actual.reps ?? 0}`, `Volume PB: ${((bestVolume.actual.weightKg ?? 0) * (bestVolume.actual.reps ?? 0)).toFixed(1)} kg`];
+    return [`Load PB: ${heaviest.actual.weightKg ?? 0} kg x ${formatActualReps(heaviest)}`, `Volume PB: ${((bestVolume.actual.weightKg ?? 0) * (bestVolume.actual.reps ?? 0)).toFixed(1)} kg`];
   }
 
   if (mode === 'timed_hold') {
@@ -1317,13 +1386,20 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
     const scoreB = (b.actual.bandColourIds?.length ?? 0) * 100 + (b.actual.reps ?? 0);
     return scoreB - scoreA;
   })[0];
-  return [`Band PB: ${formatBandNames(bestBandSet.actual.bandColourIds ?? [], bandColours)} x ${bestBandSet.actual.reps ?? 0}`];
+  return [`Band PB: ${formatBandNames(bestBandSet.actual.bandColourIds ?? [], bandColours)} x ${formatActualReps(bestBandSet)}`];
 }
 
 function formatSetActual(set: SessionSet, bandColours: BandColour[]): string {
-  if (set.mode === 'weighted_reps') return `${set.actual.weightKg ?? 0} kg x ${set.actual.reps ?? 0}`;
+  if (set.mode === 'weighted_reps') return `${set.actual.weightKg ?? 0} kg x ${formatActualReps(set)}`;
   if (set.mode === 'timed_hold') return `${set.actual.seconds ?? 0}s`;
-  return `${formatBandNames(set.actual.bandColourIds ?? [], bandColours)} x ${set.actual.reps ?? 0}`;
+  return `${formatBandNames(set.actual.bandColourIds ?? [], bandColours)} x ${formatActualReps(set)}`;
+}
+
+function formatActualReps(set: SessionSet): string {
+  if (!set.tracksSides) return String(set.actual.reps ?? 0);
+  const leftReps = set.actual.leftReps ?? set.actual.reps ?? 0;
+  const rightReps = set.actual.rightReps ?? set.actual.reps ?? 0;
+  return `L${leftReps}/R${rightReps}`;
 }
 
 function formatBandNames(ids: string[], bandColours: BandColour[]): string {

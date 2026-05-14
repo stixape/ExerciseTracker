@@ -11,6 +11,10 @@ describe('rest timer rules', () => {
     expect(getRestDurationSeconds(4, true)).toBe(120);
   });
 
+  it('uses 1 minute between unilateral sets', () => {
+    expect(getRestDurationSeconds(2, true, true)).toBe(60);
+  });
+
   it('does not create a timer after the final set', () => {
     expect(getRestDurationSeconds(0, false)).toBe(0);
     expect(getRestDurationSeconds(3, false)).toBe(0);

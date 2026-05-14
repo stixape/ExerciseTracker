@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultTemplate, defaultBandColours } from './sampleData';
 import { createSessionFromDay } from './session';
-import { getCurrentSessionSet, getWheelValues, formatSetTarget, formatSetPreparation, getRepWheelMax, applySetProgression } from './workoutFlow';
+import { getCurrentSessionSet, getWheelValues, formatSetTarget, getRepWheelMax, applySetProgression } from './workoutFlow';
 
 describe('focused workout flow helpers', () => {
   it('selects the first incomplete set in strict workout order', () => {
@@ -15,23 +15,20 @@ describe('focused workout flow helpers', () => {
     expect(nextSet?.exerciseName).toBe(session.sets[1].exerciseName);
   });
 
-  it('formats target and preparation details for weighted sets', () => {
+  it('formats target details for weighted sets', () => {
     const session = createSessionFromDay(createDefaultTemplate().days[0]);
     const set = session.sets[0];
 
     expect(formatSetTarget(set, defaultBandColours)).toBe('60 kg x 5 reps');
-    expect(formatSetPreparation(set, defaultBandColours)).toBe('Prepare 60 kg');
   });
 
-  it('formats target and preparation details for timed and band sets', () => {
+  it('formats target details for timed and band sets', () => {
     const session = createSessionFromDay(createDefaultTemplate().days[0]);
     const timedSet = session.sets.find((set) => set.mode === 'timed_hold')!;
     const bandSet = session.sets.find((set) => set.mode === 'band_reps')!;
 
     expect(formatSetTarget(timedSet, defaultBandColours)).toBe('45 seconds');
-    expect(formatSetPreparation(timedSet, defaultBandColours)).toBe('Prepare for 45 seconds');
     expect(formatSetTarget(bandSet, defaultBandColours)).toBe('Red x 10 reps');
-    expect(formatSetPreparation(bandSet, defaultBandColours)).toBe('Prepare Red band');
   });
 
   it('creates inclusive scroll wheel values within the configured limits', () => {
@@ -70,6 +67,31 @@ describe('focused workout flow helpers', () => {
     const updatedTemplate = applySetProgression(template, session, set, { weightKg: 62.5 });
 
     expect(updatedTemplate.days[0].exercises[0].sets[0].target.weightKg).toBe(60);
+  });
+
+  it('requires both sides to meet target before updating unilateral set progression', () => {
+    const template = createDefaultTemplate();
+    const unilateralTemplate = {
+      ...template,
+      days: template.days.map((day, dayIndex) =>
+        dayIndex === 0
+          ? {
+              ...day,
+              exercises: day.exercises.map((exercise, exerciseIndex) => (exerciseIndex === 2 ? { ...exercise, tracksSides: true } : exercise)),
+            }
+          : day,
+      ),
+    };
+    const session = createSessionFromDay(unilateralTemplate.days[0]);
+    const set = session.sets.find((item) => item.exerciseName === template.days[0].exercises[2].name)!;
+    const missedRight = { ...set, actual: { ...set.actual, leftReps: 10, rightReps: 9, reps: 9 } };
+    const bothComplete = { ...set, actual: { ...set.actual, leftReps: 10, rightReps: 10, reps: 10 } };
+
+    const missedUpdate = applySetProgression(unilateralTemplate, session, missedRight, { weightKg: 14 });
+    const completedUpdate = applySetProgression(unilateralTemplate, session, bothComplete, { weightKg: 14 });
+
+    expect(missedUpdate.days[0].exercises[2].sets[0].target.weightKg).toBe(12);
+    expect(completedUpdate.days[0].exercises[2].sets[0].target.weightKg).toBe(14);
   });
 
   it('updates the planned band after a band rep target is met', () => {

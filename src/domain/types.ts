@@ -10,6 +10,8 @@ export interface BandColour {
 export interface SetValues {
   weightKg?: number;
   reps?: number;
+  leftReps?: number;
+  rightReps?: number;
   seconds?: number;
   bandColourIds?: string[];
 }
@@ -24,6 +26,7 @@ export interface TemplateExercise {
   id: string;
   name: string;
   mode: MetricMode;
+  tracksSides?: boolean;
   sets: TemplateSet[];
 }
 
@@ -48,6 +51,7 @@ export interface SessionSet {
   exerciseIndex: number;
   setNumber: number;
   mode: MetricMode;
+  tracksSides?: boolean;
   target: SetValues;
   actual: SetValues;
   completedAt?: string;

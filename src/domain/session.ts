@@ -2,19 +2,45 @@ import { createId } from './ids';
 import type { ActiveRest, RestEvent, SessionSet, SetValues, TemplateDay, WorkoutSession } from './types';
 import { getNextIncompleteSet, getRestDurationSeconds, isFinalSet } from './rest';
 
+function cloneSetValues(values: SetValues): SetValues {
+  return {
+    ...values,
+    bandColourIds: [...(values.bandColourIds ?? [])],
+  };
+}
+
+function createActualValues(set: SetValues, tracksSides: boolean): SetValues {
+  const actual = cloneSetValues(set);
+  if (!tracksSides) return actual;
+
+  const targetReps = set.reps ?? 0;
+  const leftReps = actual.leftReps ?? targetReps;
+  const rightReps = actual.rightReps ?? targetReps;
+  return {
+    ...actual,
+    reps: Math.min(leftReps, rightReps),
+    leftReps,
+    rightReps,
+  };
+}
+
 export function createSessionFromDay(day: TemplateDay): WorkoutSession {
   const sets: SessionSet[] = day.exercises.flatMap((exercise, exerciseIndex) =>
-    exercise.sets.map((set) => ({
-      id: createId('session_set'),
-      templateSetId: set.id,
-      exerciseId: exercise.id,
-      exerciseName: exercise.name,
-      exerciseIndex,
-      setNumber: set.setNumber,
-      mode: exercise.mode,
-      target: { ...set.target, bandColourIds: [...(set.target.bandColourIds ?? [])] },
-      actual: { ...set.target, bandColourIds: [...(set.target.bandColourIds ?? [])] },
-    })),
+    exercise.sets.map((set) => {
+      const tracksSides = Boolean(exercise.tracksSides && exercise.mode !== 'timed_hold');
+      return {
+        id: createId('session_set'),
+        templateSetId: set.id,
+        exerciseId: exercise.id,
+        exerciseName: exercise.name,
+        exerciseIndex,
+        setNumber: set.setNumber,
+        mode: exercise.mode,
+        tracksSides,
+        target: cloneSetValues(set.target),
+        actual: createActualValues(set.target, tracksSides),
+      };
+    }),
   );
 
   return {
@@ -65,7 +91,7 @@ export function createActiveRest(session: WorkoutSession, completedSetId: string
   if (!completedSet || isFinalSet(session, completedSetId)) return undefined;
 
   const now = Date.now();
-  const durationSeconds = getRestDurationSeconds(completedSet.exerciseIndex, true);
+  const durationSeconds = getRestDurationSeconds(completedSet.exerciseIndex, true, completedSet.tracksSides);
   const nextSet = getNextIncompleteSet(session, completedSetId) ?? getNextIncompleteSet(session);
 
   return {

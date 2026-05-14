@@ -13,6 +13,33 @@ describe('workout sessions', () => {
     expect(session.sets[0].actual).toEqual(session.sets[0].target);
   });
 
+  it('copies unilateral exercises into side-specific session sets', () => {
+    const day = createDefaultTemplate().days[0];
+    const unilateralDay = {
+      ...day,
+      exercises: day.exercises.map((exercise, index) =>
+        index === 2
+          ? {
+              ...exercise,
+              tracksSides: true,
+              sets: [1, 2, 3, 4, 5, 6].map((setNumber) => ({
+                ...exercise.sets[0],
+                id: `${exercise.sets[0].id}-${setNumber}`,
+                setNumber,
+              })),
+            }
+          : exercise,
+      ),
+    };
+
+    const session = createSessionFromDay(unilateralDay);
+    const unilateralSets = session.sets.filter((set) => set.exerciseName === day.exercises[2].name);
+
+    expect(unilateralSets).toHaveLength(6);
+    expect(unilateralSets[0]).toMatchObject({ tracksSides: true, setNumber: 1 });
+    expect(unilateralSets[0].actual).toMatchObject({ reps: 10, leftReps: 10, rightReps: 10 });
+  });
+
   it('completes, rests after, and uncompletes a set', () => {
     const session = createSessionFromDay(createDefaultTemplate().days[0]);
     const firstSet = session.sets[0];
@@ -30,6 +57,20 @@ describe('workout sessions', () => {
     const undone = uncompleteSet(withRestEvent, firstSet.id);
     expect(undone.sets[0].completedAt).toBeUndefined();
     expect(undone.restEvents).toEqual([]);
+  });
+
+  it('uses short rests after unilateral sets', () => {
+    const day = createDefaultTemplate().days[0];
+    const unilateralDay = {
+      ...day,
+      exercises: day.exercises.map((exercise, index) => (index === 2 ? { ...exercise, tracksSides: true } : exercise)),
+    };
+    const session = createSessionFromDay(unilateralDay);
+    const unilateralSet = session.sets.find((set) => set.exerciseName === day.exercises[2].name)!;
+    const completed = completeSet(session, unilateralSet.id, unilateralSet.actual);
+    const rest = createActiveRest(completed, unilateralSet.id);
+
+    expect(rest?.durationSeconds).toBe(60);
   });
 
   it('marks the session complete only after every set is complete', () => {
