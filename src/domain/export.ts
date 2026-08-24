@@ -1,16 +1,28 @@
 import type { AppData, WorkoutSession } from './types';
+import { APP_DATA_EXPORT_VERSION } from './dataVersion';
 
 function csvEscape(value: string | number | undefined): string {
-  const text = value === undefined ? '' : String(value);
+  const rawText = value === undefined ? '' : String(value);
+  // Spreadsheet programs may execute cells beginning with these characters as formulas.
+  const text = /^\s*[=+\-@]/.test(rawText) ? `'${rawText}` : rawText;
   if (/[",\n]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
   return text;
+}
+
+export function formatLocalCalendarDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function createJsonExport(data: AppData): string {
   return JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      version: 1,
+      version: APP_DATA_EXPORT_VERSION,
       data,
     },
     null,
@@ -25,6 +37,7 @@ export function createCsvExport(sessions: WorkoutSession[]): string {
       'date',
       'day',
       'exercise',
+      'exercise_id',
       'set',
       'mode',
       'weight_kg',
@@ -44,9 +57,10 @@ export function createCsvExport(sessions: WorkoutSession[]): string {
       const rest = session.restEvents.find((event) => event.afterSessionSetId === set.id);
       rows.push([
         session.id,
-        new Date(session.startedAt).toISOString().slice(0, 10),
+        formatLocalCalendarDate(session.startedAt),
         session.label,
         set.exerciseName,
+        set.exerciseId,
         String(set.setNumber),
         set.mode,
         String(set.actual.weightKg ?? ''),

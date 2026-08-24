@@ -11,9 +11,9 @@ The application supports Monday-Saturday workout templates, workout logging, gui
 - React + TypeScript frontend.
 - Vite build and development tooling.
 - React Router app routing.
-- Local browser storage for the editable plan and completed history.
-- IndexedDB through Dexie for active-workout persistence and a local sync queue that can support a future backend.
-- PWA manifest and service worker for Android installation and desktop access.
+- One validated IndexedDB snapshot through Dexie for the editable plan, active workout, completed history, settings, and band colours.
+- A one-time migration from the earlier local-storage/IndexedDB split; no dormant sync queue or cloud writes.
+- PWA manifest with dedicated standard, maskable, and Apple icons, plus a build-generated full precache for Android installation, desktop access, and repeat offline loads.
 - No account authorisation or sign-in flow in v1.
 
 ## Core Product Model
@@ -47,7 +47,7 @@ Workout logging:
 - The active workout view emphasises only the current exercise and advances when all sets for that exercise are complete.
 - The current exercise can be manually changed from the exercise progress strip; when a manually selected exercise is completed, the app returns to the earliest incomplete exercise.
 - After a set is completed, the app starts a rest timer if another set remains.
-- Rest duration is fixed in v1: 3 minutes after sets in the first exercise, 2 minutes after all later exercise sets.
+- Rest duration is fixed in v1: 3 minutes after ordinary sets in the first exercise, 2 minutes after ordinary sets in later exercises, and 1 minute for side-tracked sets.
 - No timer starts after the final set.
 - The timer screen shows countdown, next exercise/set, and a skip control.
 - When the timer ends, the app plays a short alarm sound, shows a visual completion state, and uses vibration where supported.
@@ -56,14 +56,14 @@ Workout logging:
 Progress:
 
 - Exercise history over time.
-- PBs for highest weight, highest reps at a weight, longest hold, and best band/reps result.
+- PBs for highest load, best weighted-set volume, longest hold, and best band/reps result.
 - Volume trends for weighted exercises.
 - Simple plateau detection after 3 completed appearances without improvement.
 - Future workout targets remain manual in v1.
 
 ## Production Phases
 
-1. Project scaffold and foundation: React/Vite/TypeScript PWA, routing, app shell, local storage, service worker, and baseline test tooling.
+1. Project scaffold and foundation: React/Vite/TypeScript PWA, routing, app shell, IndexedDB persistence, service worker, and baseline test tooling.
 2. Plan builder: Monday-Saturday template management, day editor, exercise/set targets, set removal, measurement mode selection, and custom band colour management.
 3. Workout execution: mobile-first active workout, one-tap set completion, quick edits, session completion/history, rest timers, alarm sound, and local persistence.
 4. Analytics and export: per-day exercise progress, PB summaries, plateau indicators, weight-over-time charts, deletable session history, JSON backup, and CSV workout export.
@@ -73,9 +73,10 @@ Progress:
 ## Test Plan
 
 - Unit tests for set-mode validation, rest-duration calculation, PB calculation, plateau detection, and export formatting.
-- Integration tests for template-to-session snapshot creation, one-tap completion, rest timer start/skip/finish, and offline persistence.
+- Integration tests for template-to-session snapshot creation, one-tap completion, rest timer start/skip/finish, offline persistence, and strict import-envelope validation.
 - Mobile viewport tests for plan editing, active workout logging, rest timer display, dark mode, and progress drilldowns.
 - Desktop viewport tests for per-day progress, session deletion controls, analytics, and export.
+- Production-artifact regression that verifies every emitted file is precached, unrelated caches survive activation, stale app caches are removed, and the first post-install reload works offline without the HTTP cache.
 - Manual PWA checks on Android: installability, launch icon, offline active-workout logging, rest alarm sound after prior user interaction, and session persistence after refresh.
 
 ## Assumptions

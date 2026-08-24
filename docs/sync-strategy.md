@@ -1,18 +1,18 @@
 # Sync Strategy
 
-ExerciseTracker remains local-first for the final deployment. No Supabase client, authentication UI, database migrations, server tables, or cloud writes are part of this release.
+ExerciseTracker remains local-first for the final deployment. No Supabase client, authentication UI, server-side database migrations, server tables, or cloud writes are part of this release.
 
 ## Current Release
 
 - The browser is the source of truth.
 - JSON export/import/reset is the supported portability and recovery path.
-- The local Dexie queue remains an implementation hook for future sync work, but nothing is transmitted.
+- Dexie stores one canonical app-data snapshot. The unused local sync queue was removed rather than retaining unsent or deleted sessions indefinitely.
 
 ## Future Default
 
 When sync is approved, use snapshot backup first:
 
-- Payload shape: the existing JSON export envelope, `{ "version": 1, "exportedAt": "...", "data": ... }`.
+- Payload shape: the current versioned JSON export envelope, `{ "version": 2, "exportedAt": "...", "data": ... }`.
 - Storage model: one private app-data snapshot per authenticated user.
 - Restore policy: restoring a server snapshot explicitly replaces local data after user confirmation.
 - Conflict policy: last saved snapshot wins; do not merge individual sets, sessions, or template records.

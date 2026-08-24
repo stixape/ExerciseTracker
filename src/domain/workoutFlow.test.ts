@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultTemplate, defaultBandColours } from './sampleData';
 import { createSessionFromDay } from './session';
-import { getCurrentSessionSet, getWheelValues, formatSetTarget, getRepWheelMax, applySetProgression } from './workoutFlow';
+import {
+  applySessionProgressions,
+  applySetProgression,
+  formatSetTarget,
+  getCurrentSessionSet,
+  getRepWheelMax,
+  getWheelValues,
+  stageSetProgression,
+} from './workoutFlow';
 
 describe('focused workout flow helpers', () => {
   it('selects the first incomplete set in strict workout order', () => {
@@ -43,11 +51,11 @@ describe('focused workout flow helpers', () => {
     expect(seconds).toHaveLength(301);
   });
 
-  it('caps attained reps at the current set target', () => {
+  it('allows over-performance beyond the current rep target', () => {
     const session = createSessionFromDay(createDefaultTemplate().days[0]);
 
-    expect(getRepWheelMax(session.sets[0])).toBe(5);
-    expect(getRepWheelMax(session.sets[3])).toBe(10);
+    expect(getRepWheelMax(session.sets[0])).toBe(50);
+    expect(getRepWheelMax({ ...session.sets[0], target: { ...session.sets[0].target, reps: 75 } })).toBe(75);
   });
 
   it('updates the planned weight after a weighted target is met', () => {
@@ -67,6 +75,14 @@ describe('focused workout flow helpers', () => {
     const updatedTemplate = applySetProgression(template, session, set, { weightKg: 62.5 });
 
     expect(updatedTemplate.days[0].exercises[0].sets[0].target.weightKg).toBe(60);
+  });
+
+  it('does not stage weighted progression when reps were reached below the target load', () => {
+    const template = createDefaultTemplate();
+    const session = createSessionFromDay(template.days[0]);
+    const weighted = { ...session.sets[0], actual: { weightKg: 40, reps: 5 } };
+
+    expect(stageSetProgression(weighted, { weightKg: 62.5 }).proposedNextTarget).toBeUndefined();
   });
 
   it('requires both sides to meet target before updating unilateral set progression', () => {
@@ -101,5 +117,47 @@ describe('focused workout flow helpers', () => {
     const updatedTemplate = applySetProgression(template, session, { ...bandSet, actual: { ...bandSet.actual, reps: 10 } }, { bandColourIds: ['band_blue'] });
 
     expect(updatedTemplate.days[0].exercises[4].sets[0].target.bandColourIds).toEqual(['band_blue']);
+  });
+
+  it('rejects invalid or unknown planned targets', () => {
+    const template = createDefaultTemplate();
+    const session = createSessionFromDay(template.days[0]);
+    const weighted = session.sets[0];
+    const band = session.sets.find((set) => set.mode === 'band_reps')!;
+
+    expect(() => applySetProgression(template, session, weighted, { weightKg: Number.NaN })).toThrow('Next weight');
+    expect(() => applySetProgression(template, session, band, { bandColourIds: ['missing'] }, ['band_red'])).toThrow(
+      'not available',
+    );
+  });
+
+  it('stages, clears, and transactionally applies next-time targets', () => {
+    const template = createDefaultTemplate();
+    const session = createSessionFromDay(template.days[0]);
+    const performed = { ...session.sets[0], actual: { ...session.sets[0].actual, reps: 7 } };
+    const staged = stageSetProgression(performed, { weightKg: 62.5, reps: 6 });
+    const completedAt = '2026-05-12T11:00:00.000Z';
+    const completedSession = {
+      ...session,
+      completedAt,
+      sets: session.sets.map((set) =>
+        set.id === staged.id ? { ...staged, completedAt } : { ...set, completedAt },
+      ),
+    };
+
+    expect(staged.proposedNextTarget).toEqual({ weightKg: 62.5, reps: 6 });
+    expect(stageSetProgression(staged, { weightKg: 60, reps: 5 }).proposedNextTarget).toBeUndefined();
+    expect(applySessionProgressions(template, { ...completedSession, completedAt: undefined })).toBe(template);
+
+    const updated = applySessionProgressions(template, completedSession);
+    expect(updated.days[0].exercises[0].sets[0].target).toMatchObject({ weightKg: 62.5, reps: 6 });
+  });
+
+  it('supports staging timed targets for the completion summary', () => {
+    const template = createDefaultTemplate();
+    const session = createSessionFromDay(template.days[0]);
+    const timed = session.sets.find((set) => set.mode === 'timed_hold')!;
+
+    expect(stageSetProgression(timed, { seconds: 60 }).proposedNextTarget).toEqual({ seconds: 60 });
   });
 });

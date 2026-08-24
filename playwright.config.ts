@@ -11,23 +11,19 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'github' : 'list',
+  globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: 'http://127.0.0.1:4174',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'npm run build:pages && npm run preview -- --port 4174',
-    url: 'http://127.0.0.1:4174/ExerciseTracker/',
-    reuseExistingServer: false,
-  },
   projects: [
     {
       name: 'desktop-chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], channel: process.env.PLAYWRIGHT_CHANNEL },
     },
     {
       name: 'mobile-chromium',
-      use: { ...devices['Pixel 5'] },
+      use: { ...devices['Pixel 5'], channel: process.env.PLAYWRIGHT_CHANNEL },
     },
   ],
 });

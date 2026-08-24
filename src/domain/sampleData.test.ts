@@ -20,4 +20,9 @@ describe('default template', () => {
     const saturday = getTemplateDayForToday(template, new Date('2026-05-02T12:00:00'));
     expect(saturday?.label).toBe('Saturday');
   });
+
+  it('returns no workout for an unscheduled Sunday', () => {
+    const template = createDefaultTemplate();
+    expect(getTemplateDayForToday(template, new Date('2026-05-03T12:00:00'))).toBeUndefined();
+  });
 });

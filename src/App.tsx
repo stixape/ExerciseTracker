@@ -1,11 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
   BarChart3,
+  ChevronDown,
   Check,
   ChevronRight,
-  Clock3,
   Download,
   Dumbbell,
   Home,
@@ -15,22 +15,19 @@ import {
   Plus,
   RotateCcw,
   Settings,
-  SkipForward,
   Sun,
-  TimerReset,
   Trash2,
   Upload,
 } from 'lucide-react';
-import { detectPlateaus } from './domain/analytics';
+import { LOCAL_USER_ID, TrackerProvider, useTracker } from './app/TrackerContext';
+import { EmptyState, PageTitle } from './components/PageTitle';
+import { calculateSetVolume, detectPlateaus, getPerformedRepCount } from './domain/analytics';
 import { getTemplateDayForToday } from './domain/calendar';
 import { createJsonExport, createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
-import { formatDuration } from './domain/rest';
-import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent } from './domain/session';
+import { createSessionFromDay } from './domain/session';
 import type {
-  ActiveRest,
-  AppData,
   BandColour,
   MetricMode,
   SessionSet,
@@ -40,84 +37,54 @@ import type {
   TemplateSet,
   WorkoutSession,
 } from './domain/types';
-import { validateSetValues } from './domain/validation';
-import {
-  applySetProgression,
-  formatSetTarget,
-  getCurrentSessionSet,
-  getRepWheelMax,
-  getWheelValues,
-  type PlannedSetProgression,
-} from './domain/workoutFlow';
-import { playRestAlarm, primeAlarmAudio } from './lib/alarm';
-import { clearActiveWorkout, loadActiveWorkout, queueCompletedSession, resetOfflineData, saveActiveWorkout } from './lib/offlineDb';
-import { loadLocalData, parseJsonImport, saveLocalData } from './lib/localData';
+import { primeAlarmAudio } from './lib/alarm';
+import { parseJsonImport } from './lib/localData';
+import { formatActualReps, formatBandNames, formatSetActual } from './lib/workoutFormatting';
+import { WorkoutPage } from './features/workout/WorkoutPage';
 
-const LOCAL_USER_ID = 'local-user';
-
-interface TrackerContextValue {
-  data: AppData;
-  saveData: (updater: (current: AppData) => AppData) => void;
-}
-
-const TrackerContext = createContext<TrackerContextValue | null>(null);
-
-function useTracker(): TrackerContextValue {
-  const value = useContext(TrackerContext);
-  if (!value) throw new Error('useTracker must be used inside TrackerContext');
-  return value;
-}
+const MAX_JSON_IMPORT_BYTES = 25 * 1024 * 1024;
 
 function App() {
-  return <TrackerProvider />;
-}
-
-function TrackerProvider() {
-  const [data, setData] = useState<AppData>(() => loadLocalData(LOCAL_USER_ID));
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = data.settings.theme;
-  }, [data.settings.theme]);
-
-  useEffect(() => {
-    loadActiveWorkout(LOCAL_USER_ID).then((activeWorkout) => {
-      if (activeWorkout) {
-        setData((current) => ({ ...current, activeWorkout }));
-      }
-    });
-  }, []);
-
-  const saveData = useCallback(
-    (updater: (current: AppData) => AppData) => {
-      setData((current) => {
-        const next = updater(current);
-        saveLocalData(next);
-        if (next.activeWorkout) {
-          void saveActiveWorkout(next.userId, next.activeWorkout);
-        } else {
-          void clearActiveWorkout(next.userId);
-        }
-        return next;
-      });
-    },
-    [],
-  );
-
-  const contextValue = useMemo(() => ({ data, saveData }), [data, saveData]);
-
   return (
-    <TrackerContext.Provider value={contextValue}>
+    <TrackerProvider>
       <AppShell />
-    </TrackerContext.Provider>
+    </TrackerProvider>
   );
 }
 
 function AppShell() {
   const { data } = useTracker();
   const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
   const todayDay = getTemplateDayForToday(data.template);
-  const workoutPath = todayDay ? `/workout/${todayDay.id}` : '/workout';
-  const hideWorkoutChrome = Boolean(data.activeWorkout && location.pathname.startsWith('/workout'));
+  const workoutPath = data.activeWorkout ? '/workout' : todayDay ? `/workout/${todayDay.id}` : '/workout';
+  const activeWorkoutPreviewPath = data.activeWorkout ? `/workout/${data.activeWorkout.session.templateDayId}` : undefined;
+  const hideWorkoutChrome = Boolean(
+    data.activeWorkout && (location.pathname === '/workout' || location.pathname === activeWorkoutPreviewPath),
+  );
+  const routeName = location.pathname.startsWith('/plan')
+    ? 'Plan'
+    : location.pathname.startsWith('/workout')
+      ? 'Workout'
+      : location.pathname.startsWith('/progress')
+        ? 'Progress'
+        : location.pathname.startsWith('/settings')
+          ? 'Settings'
+          : 'Today';
+  const completedSets = data.activeWorkout?.session.sets.filter((set) => set.completedAt).length ?? 0;
+  const totalSets = data.activeWorkout?.session.sets.length ?? 0;
+
+  useEffect(() => {
+    document.title = `${routeName} | ExerciseTracker`;
+    const frame = window.requestAnimationFrame(() => {
+      const heading = mainRef.current?.querySelector<HTMLElement>('h1');
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname, routeName]);
 
   return (
     <div className={hideWorkoutChrome ? 'app-shell workout-focus-shell' : 'app-shell'}>
@@ -133,7 +100,7 @@ function AppShell() {
         </header>
       )}
 
-      <main className={hideWorkoutChrome ? 'main-content workout-focus-main' : 'main-content'}>
+      <main ref={mainRef} id="main-content" className={hideWorkoutChrome ? 'main-content workout-focus-main' : 'main-content'}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/plan" element={<PlanPage />} />
@@ -141,8 +108,13 @@ function AppShell() {
           <Route path="/workout" element={<WorkoutPage />} />
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate replace to="/" />} />
         </Routes>
       </main>
+
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {data.activeWorkout ? `${completedSets} of ${totalSets} workout sets completed.` : `${routeName} page.`}
+      </p>
 
       {!hideWorkoutChrome && (
         <nav className="bottom-nav" aria-label="Primary">
@@ -167,40 +139,56 @@ function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label
 }
 
 function Dashboard() {
-  const { data } = useTracker();
+  const { data, saveData } = useTracker();
   const navigate = useNavigate();
   const completedSessions = data.sessions.filter((session) => session.completedAt).length;
   const totalCompletedSets = data.sessions.reduce((total, session) => total + session.sets.filter((set) => set.completedAt).length, 0);
-  const nextDay = getTemplateDayForToday(data.template);
+  const todayDay = getTemplateDayForToday(data.template);
+  const activeSession = data.activeWorkout?.session;
+  const activeCompletedSets = activeSession?.sets.filter((set) => set.completedAt).length ?? 0;
+  const activeTotalSets = activeSession?.sets.length ?? 0;
+
+  function startToday() {
+    if (!todayDay) return;
+    if (!todayDay.exercises.length || !todayDay.exercises.some((exercise) => exercise.sets.length)) {
+      navigate(`/workout/${todayDay.id}`);
+      return;
+    }
+    saveData((current) => ({ ...current, activeWorkout: { session: createSessionFromDay(todayDay) } }));
+    primeAlarmAudio();
+    navigate('/workout');
+  }
 
   return (
     <div className="page-stack">
       <section className="overview-band">
         <div>
           <p className="eyebrow">Today</p>
-          <h1>{nextDay?.label ?? 'Workout'}</h1>
-          <p>{nextDay ? `${nextDay.exercises.length} exercises planned` : 'Create a workout day to begin.'}</p>
+          <h1>{activeSession?.label ?? todayDay?.label ?? 'Rest day'}</h1>
+          <p>
+            {activeSession
+              ? `${activeCompletedSets} of ${activeTotalSets} sets complete`
+              : todayDay
+                ? `${todayDay.exercises.length} exercises planned`
+                : 'Nothing is scheduled today. Recover well or choose another workout.'}
+          </p>
         </div>
-        {nextDay && (
-          <button className="primary-button" type="button" onClick={() => navigate(`/workout/${nextDay.id}`)}>
+        {activeSession ? (
+          <button className="primary-button" type="button" onClick={() => navigate('/workout')}>
             <Play size={18} />
-            Start
+            Resume workout
+          </button>
+        ) : todayDay ? (
+          <button className="primary-button" type="button" onClick={startToday}>
+            <Play size={18} />
+            Start workout
+          </button>
+        ) : (
+          <button className="ghost-button hero-ghost-button" type="button" onClick={() => navigate('/workout')}>
+            Choose a workout
           </button>
         )}
       </section>
-
-      {data.activeWorkout && (
-        <section className="status-strip">
-          <TimerReset size={22} />
-          <div>
-            <strong>Workout in progress</strong>
-            <span>{data.activeWorkout.session.label}</span>
-          </div>
-          <button type="button" className="ghost-button" onClick={() => navigate('/workout')}>
-            Resume
-          </button>
-        </section>
-      )}
 
       <section className="metric-grid">
         <MetricTile label="Completed sessions" value={completedSessions} />
@@ -244,6 +232,7 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 function PlanPage() {
   const { data, saveData } = useTracker();
   const [selectedDayId, setSelectedDayId] = useState(data.template.days[0]?.id ?? '');
+  const [lastRemoved, setLastRemoved] = useState<{ dayId: string; exercise: TemplateExercise; index: number }>();
   const selectedDay = data.template.days.find((day) => day.id === selectedDayId) ?? data.template.days[0];
 
   function updateDay(dayId: string, updater: (day: TemplateDay) => TemplateDay) {
@@ -284,17 +273,47 @@ function PlanPage() {
     }));
   }
 
+  function removeExercise(exercise: TemplateExercise, exerciseIndex: number) {
+    if (!selectedDay) return;
+    const confirmed = window.confirm(`Remove ${exercise.name} and all of its planned sets from ${selectedDay.label}?`);
+    if (!confirmed) return;
+
+    setLastRemoved({ dayId: selectedDay.id, exercise: structuredClone(exercise), index: exerciseIndex });
+    updateDay(selectedDay.id, (day) => ({
+      ...day,
+      exercises: day.exercises.filter((item) => item.id !== exercise.id),
+    }));
+  }
+
+  function undoRemoveExercise() {
+    if (!lastRemoved) return;
+    updateDay(lastRemoved.dayId, (day) => {
+      const exercises = [...day.exercises];
+      exercises.splice(Math.min(lastRemoved.index, exercises.length), 0, lastRemoved.exercise);
+      return { ...day, exercises };
+    });
+    setSelectedDayId(lastRemoved.dayId);
+    setLastRemoved(undefined);
+  }
+
   if (!selectedDay) {
     return <EmptyState title="No plan days" text="Create a template day to start building workouts." />;
   }
 
   return (
     <div className="page-stack">
-      <PageTitle eyebrow="Plan builder" title="Weekly workouts" text="Edit exercise targets. Each day starts from the planned 5 exercises and 3 sets, but the structure can expand." />
+      <PageTitle eyebrow="Plan" title="Weekly workouts" text="Choose a day, then expand only the exercises you want to edit." />
 
-      <div className="day-tabs">
+      <div className="day-tabs" role="tablist" aria-label="Workout days">
         {data.template.days.map((day) => (
-          <button key={day.id} className={day.id === selectedDay.id ? 'active' : ''} type="button" onClick={() => setSelectedDayId(day.id)}>
+          <button
+            key={day.id}
+            className={day.id === selectedDay.id ? 'active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={day.id === selectedDay.id}
+            onClick={() => setSelectedDayId(day.id)}
+          >
             {day.label}
           </button>
         ))}
@@ -307,6 +326,19 @@ function PlanPage() {
         </label>
       </section>
 
+      {lastRemoved && (
+        <section className="status-strip" role="status">
+          <Check size={22} aria-hidden="true" />
+          <div>
+            <strong>{lastRemoved.exercise.name} removed</strong>
+            <span>You can undo this while you stay on the Plan page.</span>
+          </div>
+          <button type="button" className="ghost-button" onClick={undoRemoveExercise}>
+            Undo
+          </button>
+        </section>
+      )}
+
       <div className="exercise-list">
         {selectedDay.exercises.map((exercise, exerciseIndex) => (
           <PlanExerciseEditor
@@ -315,12 +347,7 @@ function PlanPage() {
             exerciseIndex={exerciseIndex}
             bandColours={data.bandColours}
             onChange={(updater) => updateExercise(exercise.id, updater)}
-            onRemove={() =>
-              updateDay(selectedDay.id, (day) => ({
-                ...day,
-                exercises: day.exercises.filter((item) => item.id !== exercise.id),
-              }))
-            }
+            onRemove={() => removeExercise(exercise, exerciseIndex)}
           />
         ))}
       </div>
@@ -419,26 +446,59 @@ function PlanExerciseEditor({
   }
 
   return (
-    <article className="exercise-card">
-      <div className="card-heading">
+    <details className="exercise-card plan-exercise-card">
+      <summary className="plan-exercise-summary">
         <span className="exercise-index">{exerciseIndex + 1}</span>
-        <input value={exercise.name} onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))} />
-        <button type="button" className="icon-button danger" onClick={onRemove} aria-label={`Remove ${exercise.name}`}>
-          <Trash2 size={17} />
-        </button>
-      </div>
+        <span>
+          <strong>{exercise.name}</strong>
+          <small>
+            {formatModeLabel(exercise.mode)} · {exercise.sets.length} {exercise.sets.length === 1 ? 'set' : 'sets'}
+          </small>
+        </span>
+        <ChevronDown size={20} aria-hidden="true" />
+      </summary>
 
-      <div className="segmented-control" aria-label="Exercise mode">
-        <button className={exercise.mode === 'weighted_reps' ? 'active' : ''} type="button" onClick={() => changeMode('weighted_reps')}>
-          Weight
-        </button>
-        <button className={exercise.mode === 'timed_hold' ? 'active' : ''} type="button" onClick={() => changeMode('timed_hold')}>
-          Time
-        </button>
-        <button className={exercise.mode === 'band_reps' ? 'active' : ''} type="button" onClick={() => changeMode('band_reps')}>
-          Bands
-        </button>
-      </div>
+      <div className="plan-exercise-body">
+        <div className="card-heading">
+          <label className="exercise-name-field">
+            Exercise name
+            <input
+              aria-label={`Exercise ${exerciseIndex + 1} name`}
+              value={exercise.name}
+              onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))}
+            />
+          </label>
+          <button type="button" className="icon-button danger" onClick={onRemove} aria-label={`Remove ${exercise.name}`}>
+            <Trash2 size={17} />
+          </button>
+        </div>
+
+        <div className="segmented-control" role="group" aria-label={`Metric for ${exercise.name}`}>
+          <button
+            className={exercise.mode === 'weighted_reps' ? 'active' : ''}
+            type="button"
+            aria-pressed={exercise.mode === 'weighted_reps'}
+            onClick={() => changeMode('weighted_reps')}
+          >
+            Weight
+          </button>
+          <button
+            className={exercise.mode === 'timed_hold' ? 'active' : ''}
+            type="button"
+            aria-pressed={exercise.mode === 'timed_hold'}
+            onClick={() => changeMode('timed_hold')}
+          >
+            Time
+          </button>
+          <button
+            className={exercise.mode === 'band_reps' ? 'active' : ''}
+            type="button"
+            aria-pressed={exercise.mode === 'band_reps'}
+            onClick={() => changeMode('band_reps')}
+          >
+            Bands
+          </button>
+        </div>
 
       {exercise.mode !== 'timed_hold' && (
         <label className="switch-row exercise-option-row">
@@ -464,7 +524,8 @@ function PlanExerciseEditor({
                   type="button"
                   className="icon-button danger"
                   aria-label={`Remove set ${set.setNumber}`}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!window.confirm(`Remove set ${set.setNumber} from ${exercise.name}?`)) return;
                     onChange((current) => ({
                       ...current,
                       sets: current.sets
@@ -473,8 +534,8 @@ function PlanExerciseEditor({
                           ...item,
                           setNumber: index + 1,
                         })),
-                    }))
-                  }
+                    }));
+                  }}
                 >
                   <Trash2 size={16} />
                 </button>
@@ -515,221 +576,8 @@ function PlanExerciseEditor({
         <Plus size={16} />
         Add set
       </button>
-    </article>
-  );
-}
-
-function WorkoutPage() {
-  const { dayId } = useParams();
-  const { data, saveData } = useTracker();
-  const navigate = useNavigate();
-  const day = dayId ? data.template.days.find((item) => item.id === dayId) : getTemplateDayForToday(data.template);
-  const activeWorkout = data.activeWorkout;
-  const routeActiveWorkout = !dayId || activeWorkout?.session.templateDayId === dayId ? activeWorkout : undefined;
-  const session = routeActiveWorkout?.session;
-
-  useEffect(() => {
-    if (!day || data.activeWorkout) return;
-    const session = createSessionFromDay(day);
-    saveData((current) => ({ ...current, activeWorkout: { session } }));
-    primeAlarmAudio();
-  }, [data.activeWorkout, day, saveData]);
-
-  function startDay(targetDay: TemplateDay) {
-    if (data.activeWorkout && data.activeWorkout.session.templateDayId !== targetDay.id) {
-      const replace = window.confirm('Starting this workout will replace the workout currently in progress. Continue?');
-      if (!replace) return;
-    }
-
-    const session = createSessionFromDay(targetDay);
-    saveData((current) => ({ ...current, activeWorkout: { session } }));
-    primeAlarmAudio();
-  }
-
-  function updateActual(setId: string, actual: SetValues) {
-    saveData((current) => {
-      if (!current.activeWorkout) return current;
-      return {
-        ...current,
-        activeWorkout: {
-          ...current.activeWorkout,
-          session: {
-            ...current.activeWorkout.session,
-            sets: current.activeWorkout.session.sets.map((set) => (set.id === setId ? { ...set, actual } : set)),
-          },
-        },
-      };
-    });
-  }
-
-  function completeWorkoutSet(set: SessionSet, progression?: PlannedSetProgression) {
-    primeAlarmAudio();
-    const errors = validateSetValues(set.mode, set.actual);
-    if (errors.length) {
-      window.alert(errors.join('\n'));
-      return;
-    }
-
-    const shouldReturnHome = Boolean(completeSessionIfDone(completeSet(session!, set.id, set.actual)).completedAt);
-
-    saveData((current) => {
-      if (!current.activeWorkout) return current;
-      const completed = completeSet(current.activeWorkout.session, set.id, set.actual);
-      const activeRest = createActiveRest(completed, set.id);
-      const completedSession = completeSessionIfDone(completed);
-      const completedSet = completedSession.sets.find((item) => item.id === set.id) ?? set;
-      const template = applySetProgression(current.template, completedSession, completedSet, progression);
-
-      if (completedSession.completedAt && !activeRest) {
-        void queueCompletedSession({
-          id: createId('sync'),
-          userId: current.userId,
-          createdAt: new Date().toISOString(),
-          type: 'session_completed',
-          payload: completedSession,
-        });
-
-        return {
-          ...current,
-          template,
-          sessions: [completedSession, ...current.sessions],
-          activeWorkout: undefined,
-        };
-      }
-
-      return {
-        ...current,
-        template,
-        activeWorkout: {
-          session: completedSession,
-          activeRest,
-        },
-      };
-    });
-
-    if (shouldReturnHome) navigate('/');
-  }
-
-  function updateRest(updater: (session: WorkoutSession, rest: ActiveRest) => { session: WorkoutSession; activeRest?: ActiveRest }) {
-    saveData((current) => {
-      if (!current.activeWorkout?.activeRest) return current;
-      const next = updater(current.activeWorkout.session, current.activeWorkout.activeRest);
-      return {
-        ...current,
-        activeWorkout: {
-          session: next.session,
-          activeRest: next.activeRest,
-        },
-      };
-    });
-  }
-
-  function finishRest(skipped: boolean) {
-    updateRest((currentSession, rest) => ({
-      session: logRestEvent(currentSession, rest, skipped),
-      activeRest: undefined,
-    }));
-  }
-
-  if (!session && day) {
-    return (
-      <div className="page-stack">
-        <PageTitle eyebrow="Workout" title={day.label} text="Start this planned workout or resume the existing active session." />
-
-        {activeWorkout && activeWorkout.session.templateDayId !== day.id && (
-          <section className="status-strip">
-            <TimerReset size={22} />
-            <div>
-              <strong>Workout in progress</strong>
-              <span>{activeWorkout.session.label}</span>
-            </div>
-            <button type="button" className="ghost-button" onClick={() => navigate(`/workout/${activeWorkout.session.templateDayId}`)}>
-              Resume
-            </button>
-          </section>
-        )}
-
-        <section className="section-block">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Selected day</p>
-              <h2>{day.label}</h2>
-            </div>
-            <button className="primary-button" type="button" onClick={() => startDay(day)}>
-              <Play size={18} />
-              Start
-            </button>
-          </div>
-          <div className="day-list">
-            {day.exercises.map((exercise, index) => (
-              <div className="day-row static-row" key={exercise.id}>
-                <span>{exercise.name}</span>
-                <small>
-                  Exercise {index + 1} - {exercise.sets.length} sets
-                </small>
-                <span />
-              </div>
-            ))}
-          </div>
-        </section>
       </div>
-    );
-  }
-
-  if (!session) {
-    return (
-      <div className="page-stack">
-        <PageTitle eyebrow="Workout" title="Choose a day" text="Start from one of your weekly template days." />
-        <div className="day-list">
-          {data.template.days.map((templateDay) => (
-            <button key={templateDay.id} className="day-row" type="button" onClick={() => startDay(templateDay)}>
-              <span>{templateDay.label}</span>
-              <small>{templateDay.exercises.length} exercises</small>
-              <Play size={18} />
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const completedCount = session.sets.filter((set) => set.completedAt).length;
-  const currentSet = getCurrentSessionSet(session);
-
-  if (activeWorkout?.activeRest) {
-    return (
-      <RestScreen
-        rest={activeWorkout.activeRest}
-        session={session}
-        bandColours={data.bandColours}
-        onSkip={() => finishRest(true)}
-        onComplete={() => finishRest(false)}
-      />
-    );
-  }
-
-  if (!currentSet) {
-    return (
-      <div className="focused-workout-screen active-set-screen">
-        <section className="active-set-panel">
-          <p className="eyebrow">Workout complete</p>
-          <h1>{session.label}</h1>
-        </section>
-      </div>
-    );
-  }
-
-  return (
-    <ActiveSetScreen
-      key={currentSet.id}
-      set={currentSet}
-      session={session}
-      completedCount={completedCount}
-      bandColours={data.bandColours}
-      onActualChange={(actual) => updateActual(currentSet.id, actual)}
-      onComplete={(progression) => completeWorkoutSet(currentSet, progression)}
-      onExit={() => navigate('/')}
-    />
+    </details>
   );
 }
 
@@ -741,266 +589,6 @@ function parseOptionalNumber(value: string): number | undefined {
   if (value === '') return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function RestScreen({
-  rest,
-  session,
-  bandColours,
-  onSkip,
-  onComplete,
-}: {
-  rest: ActiveRest;
-  session: WorkoutSession;
-  bandColours: BandColour[];
-  onSkip: () => void;
-  onComplete: () => void;
-}) {
-  const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil((new Date(rest.endsAt).getTime() - Date.now()) / 1000)));
-  const alarmPlayedRef = useRef(false);
-  const nextSet = session.sets.find((set) => set.id === rest.nextSetId);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      const nextRemaining = Math.max(0, Math.ceil((new Date(rest.endsAt).getTime() - Date.now()) / 1000));
-      setRemaining(nextRemaining);
-      if (nextRemaining === 0 && !alarmPlayedRef.current) {
-        alarmPlayedRef.current = true;
-        window.clearInterval(interval);
-        playRestAlarm();
-        onComplete();
-      }
-    }, 250);
-
-    return () => window.clearInterval(interval);
-  }, [onComplete, rest.endsAt]);
-
-  return (
-    <section className="focused-workout-screen rest-screen" aria-label="Rest period">
-      <div className="rest-countdown">
-        <Clock3 size={34} />
-        <p className="eyebrow">Rest period</p>
-        <strong>{formatDuration(remaining)}</strong>
-      </div>
-      <div className="next-up-panel">
-        <p className="eyebrow">Next up</p>
-        <h1>{nextSet ? nextSet.exerciseName : 'Next set'}</h1>
-        {nextSet && (
-          <>
-            <strong>Set {nextSet.setNumber}</strong>
-            <span>{formatSetTarget(nextSet, bandColours)}</span>
-          </>
-        )}
-      </div>
-      <button className="primary-button rest-skip-button" type="button" onClick={onSkip}>
-        <SkipForward size={17} />
-        Skip
-      </button>
-    </section>
-  );
-}
-
-function ActiveSetScreen({
-  set,
-  session,
-  completedCount,
-  bandColours,
-  onActualChange,
-  onComplete,
-  onExit,
-}: {
-  set: SessionSet;
-  session: WorkoutSession;
-  completedCount: number;
-  bandColours: BandColour[];
-  onActualChange: (values: SetValues) => void;
-  onComplete: (progression?: PlannedSetProgression) => void;
-  onExit: () => void;
-}) {
-  const [progression, setProgression] = useState<PlannedSetProgression>(() => getInitialProgression(set));
-
-  return (
-    <section className="focused-workout-screen active-set-screen">
-      <article className="active-set-panel">
-        <div className="active-set-heading">
-          <div>
-            <p className="eyebrow">Current set</p>
-            <h1>{set.exerciseName}</h1>
-            <p>
-              Set {set.setNumber} of {session.snapshot.exercises[set.exerciseIndex]?.sets.length ?? set.setNumber}
-            </p>
-          </div>
-          <span className="active-set-index">{completedCount + 1}</span>
-        </div>
-
-        <TargetSummary set={set} bandColours={bandColours} />
-        <ActualSetEditor set={set} bandColours={bandColours} progression={progression} onChange={onActualChange} onProgressionChange={setProgression} />
-
-        <div className="active-set-actions">
-          <button className="complete-button focused-complete-button" type="button" onClick={() => onComplete(progression)}>
-            <Check size={18} />
-            Complete set
-          </button>
-          <button className="ghost-button focused-exit-button" type="button" onClick={onExit}>
-            Exit Workout
-          </button>
-        </div>
-      </article>
-    </section>
-  );
-}
-
-function getInitialProgression(set: SessionSet): PlannedSetProgression {
-  if (set.mode === 'weighted_reps') return { weightKg: set.target.weightKg };
-  if (set.mode === 'band_reps') return { bandColourIds: [...(set.target.bandColourIds ?? [])] };
-  return {};
-}
-
-function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: BandColour[] }) {
-  if (set.mode === 'timed_hold') {
-    return (
-      <section className="target-summary" aria-label="Target">
-        <ValueTile label="Target time" value={`${set.target.seconds ?? 0}s`} />
-      </section>
-    );
-  }
-
-  if (set.mode === 'band_reps') {
-    return (
-      <section className="target-summary two" aria-label="Target">
-        <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
-        <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
-      </section>
-    );
-  }
-
-  return (
-    <section className="target-summary two" aria-label="Target">
-      <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
-      <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
-    </section>
-  );
-}
-
-function ValueTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="value-tile">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ActualSetEditor({
-  set,
-  bandColours,
-  progression,
-  onChange,
-  onProgressionChange,
-}: {
-  set: SessionSet;
-  bandColours: BandColour[];
-  progression: PlannedSetProgression;
-  onChange: (values: SetValues) => void;
-  onProgressionChange: (values: PlannedSetProgression) => void;
-}) {
-  function patch(next: Partial<SetValues>) {
-    onChange({ ...set.actual, ...next });
-  }
-
-  function patchProgression(next: Partial<PlannedSetProgression>) {
-    onProgressionChange({ ...progression, ...next });
-  }
-
-  function patchSideReps(side: 'left' | 'right', value: number) {
-    const targetReps = set.target.reps ?? 0;
-    const leftReps = side === 'left' ? value : set.actual.leftReps ?? set.actual.reps ?? targetReps;
-    const rightReps = side === 'right' ? value : set.actual.rightReps ?? set.actual.reps ?? targetReps;
-    patch({
-      leftReps,
-      rightReps,
-      reps: Math.min(leftReps, rightReps),
-    });
-  }
-
-  const repControls = set.tracksSides ? (
-    <div className="side-rep-grid">
-      <WheelPicker label="Left reps" value={set.actual.leftReps ?? set.actual.reps ?? set.target.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patchSideReps('left', reps)} />
-      <WheelPicker label="Right reps" value={set.actual.rightReps ?? set.actual.reps ?? set.target.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patchSideReps('right', reps)} />
-    </div>
-  ) : (
-    <WheelPicker label="Attained reps" value={set.actual.reps ?? 0} max={getRepWheelMax(set)} onChange={(reps) => patch({ reps })} />
-  );
-
-  if (set.mode === 'timed_hold') {
-    return <WheelPicker label="Attained seconds" value={set.actual.seconds ?? 0} max={300} onChange={(seconds) => patch({ seconds })} />;
-  }
-
-  if (set.mode === 'band_reps') {
-    return (
-      <section className="actual-editor">
-        {repControls}
-        <p className="eyebrow">Plan progression</p>
-        <div className="band-picker" aria-label="New band">
-          {bandColours.map((band) => {
-            const active = progression.bandColourIds?.includes(band.id) ?? false;
-            return (
-              <button
-                key={band.id}
-                type="button"
-                className={active ? 'band-swatch active' : 'band-swatch'}
-                style={{ '--band-color': band.hex } as React.CSSProperties}
-                aria-label={band.name}
-                title={band.name}
-                onClick={() => {
-                  const current = progression.bandColourIds ?? [];
-                  patchProgression({
-                    bandColourIds: active ? current.filter((id) => id !== band.id) : [...current, band.id],
-                  });
-                }}
-              />
-            );
-          })}
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="actual-editor weighted-actual-editor">
-      {repControls}
-      <label className="compact-field">
-        New weight
-        <input
-          className="numeric-input"
-          style={getNumericInputStyle(progression.weightKg)}
-          aria-label="New weight"
-          type="number"
-          min={0}
-          step={0.5}
-          value={progression.weightKg ?? ''}
-          onChange={(event) => patchProgression({ weightKg: parseOptionalNumber(event.target.value) })}
-        />
-      </label>
-    </section>
-  );
-}
-
-function WheelPicker({ label, value, max, onChange }: { label: string; value: number; max: number; onChange: (value: number) => void }) {
-  const options = value > max ? [...getWheelValues(max), value] : getWheelValues(max);
-
-  return (
-    <label className="wheel-field">
-      <span>{label}</span>
-      <select className="wheel-picker" size={5} aria-label={label} value={String(value)} onChange={(event) => onChange(Number(event.target.value))}>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 }
 
 function SetValueEditor({
@@ -1061,7 +649,8 @@ function SetValueEditor({
                 type="button"
                 className={active ? 'band-swatch active' : 'band-swatch'}
                 style={{ '--band-color': band.hex } as React.CSSProperties}
-                aria-label={band.name}
+                aria-label={`${band.name} band`}
+                aria-pressed={active}
                 title={band.name}
                 disabled={disabled}
                 onClick={() => {
@@ -1158,9 +747,16 @@ function ProgressPage() {
     <div className="page-stack">
       <PageTitle eyebrow="Progress" title="Exercise history" text="Select a day, then review each assigned exercise with PBs, history, and plateau signals." />
 
-      <div className="day-tabs">
+      <div className="day-tabs" role="tablist" aria-label="Progress workout days">
         {data.template.days.map((day) => (
-          <button key={day.id} className={day.id === selectedDay.id ? 'active' : ''} type="button" onClick={() => chooseDay(day)}>
+          <button
+            key={day.id}
+            className={day.id === selectedDay.id ? 'active' : ''}
+            type="button"
+            role="tab"
+            aria-selected={day.id === selectedDay.id}
+            onClick={() => chooseDay(day)}
+          >
             {day.label}
           </button>
         ))}
@@ -1181,6 +777,7 @@ function ProgressPage() {
               key={summary.exercise.id}
               className={summary.exercise.id === selectedSummary?.exercise.id ? 'exercise-summary-card active' : 'exercise-summary-card'}
               type="button"
+              aria-pressed={summary.exercise.id === selectedSummary?.exercise.id}
               onClick={() => setSelectedExerciseId(summary.exercise.id)}
             >
               <strong>{summary.exercise.name}</strong>
@@ -1287,14 +884,18 @@ function ProgressPage() {
 
 function getSessionsForDay(sessions: WorkoutSession[], day: TemplateDay): WorkoutSession[] {
   return sessions
-    .filter((session) => session.completedAt && (session.templateDayId === day.id || session.label === day.label))
+    .filter(
+      (session) => session.completedAt && (session.templateDayId ? session.templateDayId === day.id : session.label === day.label),
+    )
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 function buildExerciseSummary(exercise: TemplateExercise, daySessions: WorkoutSession[], bandColours: BandColour[]): ExerciseSummary {
-  const completedSets = daySessions.flatMap((session) => session.sets.filter((set) => set.completedAt && set.exerciseName === exercise.name));
+  const completedSets = daySessions.flatMap((session) => session.sets.filter((set) => set.completedAt && setMatchesExercise(set, exercise)));
   const plateaus = detectPlateaus(daySessions);
-  const plateau = plateaus.find((item) => item.exerciseName === exercise.name && item.mode === exercise.mode);
+  const plateau = plateaus.find(
+    (item) => item.mode === exercise.mode && (item.exerciseId ? item.exerciseId === exercise.id : item.exerciseName === exercise.name),
+  );
 
   return {
     exercise,
@@ -1307,7 +908,7 @@ function buildExerciseSummary(exercise: TemplateExercise, daySessions: WorkoutSe
         sessionId: session.id,
         date: formatDate(session.startedAt),
         values: session.sets
-          .filter((set) => set.completedAt && set.exerciseName === exercise.name)
+          .filter((set) => set.completedAt && setMatchesExercise(set, exercise))
           .map((set) => formatSetActual(set, bandColours))
           .join(' | '),
       }))
@@ -1321,7 +922,9 @@ function buildWeightTrend(exercise: TemplateExercise, daySessions: WorkoutSessio
   return [...daySessions]
     .reverse()
     .map((session) => {
-      const weights = session.sets.filter((set) => set.completedAt && set.exerciseName === exercise.name && set.actual.weightKg !== undefined).map((set) => set.actual.weightKg ?? 0);
+      const weights = session.sets
+        .filter((set) => set.completedAt && setMatchesExercise(set, exercise) && set.actual.weightKg !== undefined)
+        .map((set) => set.actual.weightKg ?? 0);
       return {
         date: formatShortDate(session.startedAt),
         weightKg: Math.max(0, ...weights),
@@ -1331,6 +934,8 @@ function buildWeightTrend(exercise: TemplateExercise, daySessions: WorkoutSessio
 }
 
 function WeightTrendChart({ data }: { data: Array<{ date: string; weightKg: number }> }) {
+  const captionId = useId();
+  const chartTitleId = useId();
   const width = 320;
   const height = 160;
   const padding = 28;
@@ -1345,8 +950,10 @@ function WeightTrendChart({ data }: { data: Array<{ date: string; weightKg: numb
   const polyline = points.map((point) => `${point.x},${point.y}`).join(' ');
 
   return (
-    <div className="weight-chart" aria-label="Weight over time chart">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img">
+    <figure className="weight-chart" aria-labelledby={captionId}>
+      <figcaption id={captionId}>Heaviest completed weight by workout date</figcaption>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby={chartTitleId}>
+        <title id={chartTitleId}>Weight trend from {points[0]?.date} to {points[points.length - 1]?.date}</title>
         <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
         <line x1={padding} y1={padding} x2={padding} y2={height - padding} />
         <polyline points={polyline} />
@@ -1363,8 +970,31 @@ function WeightTrendChart({ data }: { data: Array<{ date: string; weightKg: numb
         <span>{points[0]?.date}</span>
         <span>{points[points.length - 1]?.date}</span>
       </div>
-    </div>
+      <details className="chart-data">
+        <summary>View chart data</summary>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Weight</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((point, index) => (
+              <tr key={`${point.date}-${point.weightKg}-${index}`}>
+                <td>{point.date}</td>
+                <td>{point.weightKg} kg</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </figure>
   );
+}
+
+function setMatchesExercise(set: SessionSet, exercise: TemplateExercise): boolean {
+  return set.exerciseId ? set.exerciseId === exercise.id : set.exerciseName === exercise.name;
 }
 
 function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours: BandColour[]): string[] {
@@ -1372,8 +1002,8 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
 
   if (mode === 'weighted_reps') {
     const heaviest = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) - (a.actual.weightKg ?? 0))[0];
-    const bestVolume = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) * (b.actual.reps ?? 0) - (a.actual.weightKg ?? 0) * (a.actual.reps ?? 0))[0];
-    return [`Load PB: ${heaviest.actual.weightKg ?? 0} kg x ${formatActualReps(heaviest)}`, `Volume PB: ${((bestVolume.actual.weightKg ?? 0) * (bestVolume.actual.reps ?? 0)).toFixed(1)} kg`];
+    const bestVolume = [...sets].sort((a, b) => calculateSetVolume(b) - calculateSetVolume(a))[0];
+    return [`Load PB: ${heaviest.actual.weightKg ?? 0} kg x ${formatActualReps(heaviest)}`, `Volume PB: ${calculateSetVolume(bestVolume).toFixed(1)} kg·reps`];
   }
 
   if (mode === 'timed_hold') {
@@ -1382,29 +1012,11 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
   }
 
   const bestBandSet = [...sets].sort((a, b) => {
-    const scoreA = (a.actual.bandColourIds?.length ?? 0) * 100 + (a.actual.reps ?? 0);
-    const scoreB = (b.actual.bandColourIds?.length ?? 0) * 100 + (b.actual.reps ?? 0);
+    const scoreA = (a.actual.bandColourIds?.length ?? 0) * 100 + getPerformedRepCount(a);
+    const scoreB = (b.actual.bandColourIds?.length ?? 0) * 100 + getPerformedRepCount(b);
     return scoreB - scoreA;
   })[0];
   return [`Band PB: ${formatBandNames(bestBandSet.actual.bandColourIds ?? [], bandColours)} x ${formatActualReps(bestBandSet)}`];
-}
-
-function formatSetActual(set: SessionSet, bandColours: BandColour[]): string {
-  if (set.mode === 'weighted_reps') return `${set.actual.weightKg ?? 0} kg x ${formatActualReps(set)}`;
-  if (set.mode === 'timed_hold') return `${set.actual.seconds ?? 0}s`;
-  return `${formatBandNames(set.actual.bandColourIds ?? [], bandColours)} x ${formatActualReps(set)}`;
-}
-
-function formatActualReps(set: SessionSet): string {
-  if (!set.tracksSides) return String(set.actual.reps ?? 0);
-  const leftReps = set.actual.leftReps ?? set.actual.reps ?? 0;
-  const rightReps = set.actual.rightReps ?? set.actual.reps ?? 0;
-  return `L${leftReps}/R${rightReps}`;
-}
-
-function formatBandNames(ids: string[], bandColours: BandColour[]): string {
-  if (!ids.length) return 'No band';
-  return ids.map((id) => bandColours.find((band) => band.id === id)?.name ?? 'Unknown').join(' + ');
 }
 
 function formatModeLabel(mode: MetricMode): string {
@@ -1422,7 +1034,7 @@ function formatShortDate(value: string): string {
 }
 
 function SettingsPage() {
-  const { data, saveData } = useTracker();
+  const { data, saveData, replaceData } = useTracker();
   const [bandName, setBandName] = useState('');
   const [bandHex, setBandHex] = useState('#6f42c1');
   const [bandMessage, setBandMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
@@ -1449,10 +1061,38 @@ function SettingsPage() {
     setBandMessage({ tone: 'success', text: `${trimmedName} added.` });
   }
 
+  function removeBand(band: BandColour) {
+    const referencedInTemplate = data.template.days.some((day) =>
+      day.exercises.some((exercise) => exercise.sets.some((set) => set.target.bandColourIds?.includes(band.id))),
+    );
+    const referencedInSessions = [...data.sessions, ...(data.activeWorkout ? [data.activeWorkout.session] : [])].some((session) =>
+      session.sets.some(
+        (set) =>
+          set.target.bandColourIds?.includes(band.id) ||
+          set.actual.bandColourIds?.includes(band.id) ||
+          set.proposedNextTarget?.bandColourIds?.includes(band.id),
+      ),
+    );
+    if (referencedInTemplate || referencedInSessions) {
+      setBandMessage({ tone: 'error', text: `${band.name} is used by a plan or workout and cannot be removed.` });
+      return;
+    }
+    if (!window.confirm(`Remove the ${band.name} band colour?`)) return;
+    saveData((current) => ({
+      ...current,
+      bandColours: current.bandColours.filter((item) => item.id !== band.id),
+    }));
+    setBandMessage({ tone: 'success', text: `${band.name} removed.` });
+  }
+
   async function importJsonFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
     if (!file) return;
+    if (file.size > MAX_JSON_IMPORT_BYTES) {
+      setDataMessage({ tone: 'error', text: 'JSON import is larger than the 25 MB safety limit.' });
+      return;
+    }
 
     const result = parseJsonImport(await file.text(), LOCAL_USER_ID);
     if (!result.ok) {
@@ -1460,18 +1100,20 @@ function SettingsPage() {
       return;
     }
 
-    await resetOfflineData(LOCAL_USER_ID);
-    saveData(() => result.data);
-    setDataMessage({ tone: 'success', text: 'JSON import restored.' });
+    const restored = await replaceData(result.data);
+    setDataMessage(
+      restored
+        ? { tone: 'success', text: 'JSON import restored.' }
+        : { tone: 'error', text: 'JSON import was valid, but could not be saved on this device.' },
+    );
   }
 
   async function resetData() {
     const confirmed = window.confirm('Reset all local ExerciseTracker data on this device? This removes workouts, plan edits, active workout progress, and band colours.');
     if (!confirmed) return;
 
-    await resetOfflineData(LOCAL_USER_ID);
-    saveData(() => createDefaultAppData(LOCAL_USER_ID));
-    setDataMessage({ tone: 'success', text: 'Local data reset.' });
+    const reset = await replaceData(createDefaultAppData(LOCAL_USER_ID));
+    setDataMessage(reset ? { tone: 'success', text: 'Local data reset.' } : { tone: 'error', text: 'Local data could not be reset.' });
   }
 
   return (
@@ -1516,12 +1158,7 @@ function SettingsPage() {
                 className="icon-button danger"
                 type="button"
                 aria-label={`Remove ${band.name}`}
-                onClick={() =>
-                  saveData((current) => ({
-                    ...current,
-                    bandColours: current.bandColours.filter((item) => item.id !== band.id),
-                  }))
-                }
+                onClick={() => removeBand(band)}
               >
                 <Trash2 size={17} />
               </button>
@@ -1584,25 +1221,6 @@ function SettingsPage() {
           </button>
         </div>
       </section>
-    </div>
-  );
-}
-
-function PageTitle({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
-  return (
-    <section className="page-title">
-      <p className="eyebrow">{eyebrow}</p>
-      <h1>{title}</h1>
-      <p>{text}</p>
-    </section>
-  );
-}
-
-function EmptyState({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      <span>{text}</span>
     </div>
   );
 }

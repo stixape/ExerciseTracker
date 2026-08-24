@@ -3,6 +3,7 @@ type WebkitWindow = Window & typeof globalThis & { webkitAudioContext?: typeof A
 let alarmContext: AudioContext | undefined;
 let alarmBufferPromise: Promise<AudioBuffer> | undefined;
 let fallbackAudio: HTMLAudioElement | undefined;
+const ALARM_FETCH_ATTEMPTS = 2;
 
 function getAlarmUrl(): string {
   return `${import.meta.env.BASE_URL}alarm_sound.wav`;
@@ -16,19 +17,44 @@ function getAudioContext(): AudioContext | undefined {
   return alarmContext;
 }
 
+async function fetchAndDecodeAlarm(context: AudioContext): Promise<AudioBuffer> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < ALARM_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(getAlarmUrl(), { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`Alarm request failed with status ${response.status}.`);
+      const bytes = await response.arrayBuffer();
+      if (!bytes.byteLength) throw new Error('Alarm response was empty.');
+      return await context.decodeAudioData(bytes);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Alarm sound could not be loaded.');
+}
+
 function loadAlarmBuffer(context: AudioContext): Promise<AudioBuffer> {
-  alarmBufferPromise ??= fetch(getAlarmUrl())
-    .then((response) => response.arrayBuffer())
-    .then((buffer) => context.decodeAudioData(buffer));
+  if (!alarmBufferPromise) {
+    const pending = fetchAndDecodeAlarm(context);
+    const guarded = pending.catch((error: unknown) => {
+      if (alarmBufferPromise === guarded) alarmBufferPromise = undefined;
+      throw error;
+    });
+    alarmBufferPromise = guarded;
+  }
 
   return alarmBufferPromise;
 }
 
-function playFallbackAudio(): void {
+async function playFallbackAudio(): Promise<void> {
   fallbackAudio ??= new Audio(getAlarmUrl());
   fallbackAudio.currentTime = 0;
-  const playResult = fallbackAudio.play();
-  if (playResult) void playResult.catch(() => undefined);
+  try {
+    await fallbackAudio.play();
+  } catch {
+    // Recreate the element next time in case this one retained a failed network state.
+    fallbackAudio = undefined;
+  }
 }
 
 export function primeAlarmAudio(): void {
@@ -36,7 +62,7 @@ export function primeAlarmAudio(): void {
 
   const context = getAudioContext();
   if (context) {
-    void loadAlarmBuffer(context);
+    void loadAlarmBuffer(context).catch(() => undefined);
     if (context.state === 'suspended') void context.resume().catch(() => undefined);
     return;
   }
@@ -63,13 +89,17 @@ export async function playRestAlarm(): Promise<void> {
       source.connect(context.destination);
       source.start();
     } catch {
-      playFallbackAudio();
+      await playFallbackAudio();
     }
   } else {
-    playFallbackAudio();
+    await playFallbackAudio();
   }
 
   if ('vibrate' in navigator) {
-    navigator.vibrate([160, 80, 160]);
+    try {
+      navigator.vibrate([160, 80, 160]);
+    } catch {
+      // Vibration is best-effort and can be blocked by browser policy.
+    }
   }
 }

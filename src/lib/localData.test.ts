@@ -1,15 +1,30 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createDefaultAppData } from '../domain/sampleData';
-import { clearLocalData, loadLocalData, parseJsonImport, resetLocalData, saveLocalData } from './localData';
+import { createSessionFromDay } from '../domain/session';
+import type { AppData, WorkoutSession } from '../domain/types';
+import { normalizeLocalData, parseJsonImport, readLegacyLocalData } from './localData';
 
 const userId = 'local-user';
 
-describe('local data import and reset', () => {
+function completedSession(data: AppData, id = 'session'): WorkoutSession {
+  const startedAt = '2026-01-01T10:00:00.000Z';
+  const completedAt = '2026-01-01T10:30:00.000Z';
+  const session = createSessionFromDay(data.template.days[0]);
+  return {
+    ...session,
+    id,
+    startedAt,
+    completedAt,
+    sets: session.sets.map((set) => ({ ...set, completedAt })),
+  };
+}
+
+describe('local data import, normalization, and legacy fallback', () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it('imports a versioned JSON export and normalizes missing weekdays', () => {
+  it('migrates a version-1 export and normalizes missing weekdays', () => {
     const exportedData = createDefaultAppData('exported-user');
     exportedData.template.days = exportedData.template.days.slice(0, 1);
 
@@ -22,60 +37,109 @@ describe('local data import and reset', () => {
     expect(result.data.template.days.map((day) => day.label)).toContain('Saturday');
   });
 
-  it('rejects invalid JSON imports', () => {
-    expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
+  it('preserves customized rep targets through normalization and import', () => {
+    const data = createDefaultAppData(userId);
+    data.template.days[0].exercises[0].sets[0].target.reps = 8;
+
+    expect(normalizeLocalData(data, userId).template.days[0].exercises[0].sets[0].target.reps).toBe(8);
+
+    const imported = parseJsonImport(JSON.stringify({ version: 1, data }), userId);
+    expect(imported.ok && imported.data.template.days[0].exercises[0].sets[0].target.reps).toBe(8);
   });
 
-  it('rejects unsupported JSON export versions', () => {
-    expect(parseJsonImport(JSON.stringify({ version: 2, data: createDefaultAppData(userId) }), userId)).toEqual({
+  it('supplies the legacy rep default only when a version-1 target omitted reps', () => {
+    const data = createDefaultAppData(userId);
+    delete data.template.days[0].exercises[0].sets[0].target.reps;
+
+    const legacy = parseJsonImport(JSON.stringify({ version: 1, data }), userId);
+    const current = parseJsonImport(JSON.stringify({ version: 2, data }), userId);
+
+    expect(legacy.ok && legacy.data.template.days[0].exercises[0].sets[0].target.reps).toBe(5);
+    expect(current).toMatchObject({ ok: false });
+  });
+
+  it('rejects invalid JSON and unsupported export versions with clear errors', () => {
+    expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
+    expect(parseJsonImport(JSON.stringify({ version: 3, data: createDefaultAppData(userId) }), userId)).toEqual({
       ok: false,
-      error: 'Import file must be an ExerciseTracker JSON export version 1.',
+      error: 'Import file uses unsupported version 3. Supported versions are 1-2.',
     });
   });
 
-  it('resets local data to the default plan without an active workout', () => {
-    const dirtyData = createDefaultAppData(userId);
-    dirtyData.sessions = [
-      {
-        id: 'session',
-        templateDayId: 'day',
-        label: 'Old session',
-        startedAt: '2026-01-01T10:00:00.000Z',
-        completedAt: '2026-01-01T10:30:00.000Z',
-        snapshot: dirtyData.template.days[0],
-        sets: [],
-        restEvents: [],
+  it.each([
+    ['a non-array sessions value', (data: Record<string, unknown>) => Object.assign(data, { sessions: 'not-an-array' }), 'data.sessions must be an array'],
+    [
+      'an invalid nested date',
+      (data: Record<string, unknown>) => {
+        const typed = data as unknown as AppData;
+        typed.sessions = [completedSession(typed)];
+        typed.sessions[0].startedAt = '2026-02-30T10:00:00.000Z';
       },
-    ];
-    dirtyData.activeWorkout = {
-      session: {
-        id: 'active',
-        templateDayId: dirtyData.template.days[0].id,
-        label: dirtyData.template.days[0].label,
-        startedAt: '2026-01-02T10:00:00.000Z',
-        snapshot: dirtyData.template.days[0],
-        sets: [],
-        restEvents: [],
+      'data.sessions[0].startedAt must be a valid ISO date-time string',
+    ],
+    [
+      'a blank nested ID',
+      (data: Record<string, unknown>) => {
+        (data as unknown as AppData).template.days[0].exercises[0].sets[0].id = ' ';
       },
-    };
+      'data.template.days[0].exercises[0].sets[0].id',
+    ],
+    [
+      'an infinite numeric target',
+      (data: Record<string, unknown>) => {
+        (data as unknown as AppData).template.days[0].exercises[0].sets[0].target.weightKg = Number.POSITIVE_INFINITY;
+      },
+      'weightKg must be a finite number',
+    ],
+    [
+      'an unknown selected set',
+      (data: Record<string, unknown>) => {
+        const typed = data as unknown as AppData;
+        typed.activeWorkout = { session: createSessionFromDay(typed.template.days[0]), selectedSetId: 'missing-set' };
+      },
+      'selectedSetId is not present in the active session',
+    ],
+    [
+      'mode-incompatible set values',
+      (data: Record<string, unknown>) => {
+        (data as unknown as AppData).template.days[0].exercises[0].sets[0].target.seconds = 30;
+      },
+      'contains values that are not valid for a weighted exercise',
+    ],
+    [
+      'a progression without a recognized target',
+      (data: Record<string, unknown>) => {
+        const typed = data as unknown as AppData;
+        const session = createSessionFromDay(typed.template.days[0]);
+        (session.sets[0] as unknown as { proposedNextTarget: Record<string, number> }).proposedNextTarget = { mystery: 1 };
+        typed.activeWorkout = { session };
+      },
+      'mystery is not a supported proposed target',
+    ],
+  ])('rejects %s without persisting it', (_label, corrupt, expectedError) => {
+    const data = createDefaultAppData(userId) as unknown as Record<string, unknown>;
+    corrupt(data);
 
-    saveLocalData(dirtyData);
-    const resetData = resetLocalData(userId);
-    const loadedData = loadLocalData(userId);
+    const result = parseJsonImport(JSON.stringify({ version: 2, data }, (_key, value) => (value === Number.POSITIVE_INFINITY ? 'Infinity' : value)), userId);
 
-    expect(resetData.sessions).toEqual([]);
-    expect(resetData.activeWorkout).toBeUndefined();
-    expect(loadedData.sessions).toEqual([]);
-    expect(loadedData.activeWorkout).toBeUndefined();
-    expect(loadedData.template.days.map((day) => day.label)).toEqual(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.error).toContain(expectedError);
+    expect(localStorage.length).toBe(0);
   });
 
-  it('loads defaults after local storage is cleared', () => {
-    saveLocalData(createDefaultAppData(userId));
-    clearLocalData(userId);
+  it('rejects duplicate semantic identifiers', () => {
+    const data = createDefaultAppData(userId);
+    data.template.days[0].exercises[1].id = data.template.days[0].exercises[0].id;
 
-    const loadedData = loadLocalData(userId);
-    expect(loadedData.sessions).toEqual([]);
-    expect(loadedData.template.days).toHaveLength(6);
+    const result = parseJsonImport(JSON.stringify({ version: 2, data }), userId);
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.error).toContain('duplicate exercise ID');
+  });
+
+  it('falls back safely when a legacy localStorage record is corrupt', () => {
+    localStorage.setItem(`exercise-tracker:data:${userId}`, JSON.stringify({ userId, sessions: 'bad' }));
+
+    expect(readLegacyLocalData(userId)).toBeUndefined();
   });
 });

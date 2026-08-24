@@ -6,5 +6,5 @@ export function getTodayWeekday(date = new Date()): number {
 
 export function getTemplateDayForToday(template: WorkoutTemplate, date = new Date()): TemplateDay | undefined {
   const weekday = getTodayWeekday(date);
-  return template.days.find((day) => day.weekday === weekday) ?? template.days[0];
+  return template.days.find((day) => day.weekday === weekday);
 }

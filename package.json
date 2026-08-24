@@ -3,15 +3,22 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": "24.19.x",
+    "npm": "11.17.x"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "build:pages": "npm run build && node scripts/create-pages-fallback.mjs",
+    "build:pages": "npm run build && node scripts/prepare-pages-build.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:pwa": "node scripts/verify-pwa.mjs",
     "test:watch": "vitest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "verify": "npm run lint && npm test && npm run build:pages && npm run test:e2e && npm run test:pwa"
   },
   "dependencies": {
     "dexie": "^4.4.2",

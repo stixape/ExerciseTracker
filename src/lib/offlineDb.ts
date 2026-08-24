@@ -1,7 +1,16 @@
-import Dexie, { type EntityTable } from 'dexie';
-import type { ActiveWorkout, QueuedSyncItem } from '../domain/types';
+import Dexie, { type EntityTable, type Transaction } from 'dexie';
+import { createDefaultAppData } from '../domain/sampleData';
+import type { ActiveWorkout, AppData } from '../domain/types';
+import { validateAppData, validateActiveWorkoutData } from './appDataSchema';
+import { clearLegacyLocalData, hasLegacyLocalData, readLegacyLocalData, restoreAppData } from './localData';
 
-interface ActiveWorkoutRecord {
+interface AppDataRecord {
+  userId: string;
+  updatedAt: string;
+  data: AppData;
+}
+
+interface LegacyActiveWorkoutRecord {
   id: string;
   userId: string;
   updatedAt: string;
@@ -9,50 +18,124 @@ interface ActiveWorkoutRecord {
 }
 
 class ExerciseTrackerDb extends Dexie {
-  activeWorkouts!: EntityTable<ActiveWorkoutRecord, 'id'>;
-  syncQueue!: EntityTable<QueuedSyncItem, 'id'>;
+  appData!: EntityTable<AppDataRecord, 'userId'>;
 
   constructor() {
     super('ExerciseTracker');
+
+    // Historical schema retained so Dexie can upgrade existing installations.
     this.version(1).stores({
       activeWorkouts: 'id, userId, updatedAt',
       syncQueue: 'id, userId, createdAt, type',
+    });
+
+    // Copy a legacy active workout into the canonical snapshot and remove the
+    // unused sync queue. The localStorage snapshot remains until a verified read.
+    this.version(2)
+      .stores({
+        appData: '&userId, updatedAt',
+        activeWorkouts: 'id, userId, updatedAt',
+        syncQueue: null,
+      })
+      .upgrade((transaction) => migrateVersionOne(transaction));
+
+    // appData is now the only source of truth.
+    this.version(3).stores({
+      appData: '&userId, updatedAt',
+      activeWorkouts: null,
+    });
+  }
+}
+
+async function migrateVersionOne(transaction: Transaction): Promise<void> {
+  const activeRecords = await transaction.table<LegacyActiveWorkoutRecord>('activeWorkouts').toArray();
+  const appDataTable = transaction.table<AppDataRecord>('appData');
+
+  for (const record of activeRecords) {
+    const legacyData = readLegacyLocalData(record.userId);
+    const baseData = legacyData ?? createDefaultAppData(record.userId);
+    const candidate =
+      baseData.activeWorkout || !validateActiveWorkoutData(record.activeWorkout, baseData.bandColours)
+        ? baseData
+        : { ...baseData, activeWorkout: record.activeWorkout };
+    const restored = restoreAppData(candidate, record.userId);
+    if (!restored.ok) continue;
+
+    await appDataTable.put({
+      userId: record.userId,
+      updatedAt: record.updatedAt,
+      data: restored.data,
     });
   }
 }
 
 export const offlineDb = new ExerciseTrackerDb();
 
-export async function saveActiveWorkout(userId: string, activeWorkout: ActiveWorkout): Promise<void> {
-  await offlineDb.activeWorkouts.put({
-    id: userId,
-    userId,
-    updatedAt: new Date().toISOString(),
-    activeWorkout,
+const writeTails = new Map<string, Promise<void>>();
+
+function afterPendingWrite(userId: string): Promise<void> {
+  return writeTails.get(userId)?.catch(() => undefined) ?? Promise.resolve();
+}
+
+function enqueueWrite(userId: string, write: () => Promise<void>): Promise<void> {
+  const previous = afterPendingWrite(userId);
+  const operation = previous.then(write);
+  writeTails.set(userId, operation);
+  operation.then(
+    () => {
+      if (writeTails.get(userId) === operation) writeTails.delete(userId);
+    },
+    () => {
+      if (writeTails.get(userId) === operation) writeTails.delete(userId);
+    },
+  );
+  return operation;
+}
+
+/** Loads the sole canonical snapshot, migrating legacy localStorage once. */
+export async function loadAppData(userId: string): Promise<AppData> {
+  await afterPendingWrite(userId);
+  const record = await offlineDb.appData.get(userId);
+  if (record) {
+    const restored = restoreAppData(record.data, userId, false);
+    if (restored.ok) {
+      if (hasLegacyLocalData(userId)) clearLegacyLocalData(userId);
+      return restored.data;
+    }
+    throw new Error(`Stored ExerciseTracker data is invalid and was left untouched: ${restored.error}`);
+  }
+
+  const hadLegacyRecord = hasLegacyLocalData(userId);
+  const legacyData = readLegacyLocalData(userId);
+  const data = legacyData ?? createDefaultAppData(userId);
+  await saveAppData(data);
+  if (hadLegacyRecord) clearLegacyLocalData(userId);
+  return data;
+}
+
+/** Serializes writes per user so rapid React updates cannot complete out of order. */
+export async function saveAppData(data: AppData): Promise<void> {
+  const validation = validateAppData(data);
+  if (!validation.ok) throw new TypeError(`ExerciseTracker data could not be saved: ${validation.error}`);
+  const snapshot = structuredClone(validation.data);
+
+  await enqueueWrite(data.userId, async () => {
+    await offlineDb.appData.put({
+      userId: data.userId,
+      updatedAt: new Date().toISOString(),
+      data: snapshot,
+    });
   });
 }
 
-export async function loadActiveWorkout(userId: string): Promise<ActiveWorkout | undefined> {
-  const record = await offlineDb.activeWorkouts.get(userId);
-  return record?.activeWorkout;
+export async function resetAppData(userId: string): Promise<AppData> {
+  const data = createDefaultAppData(userId);
+  await saveAppData(data);
+  clearLegacyLocalData(userId);
+  return data;
 }
 
-export async function clearActiveWorkout(userId: string): Promise<void> {
-  await offlineDb.activeWorkouts.delete(userId);
-}
-
-export async function queueCompletedSession(item: QueuedSyncItem): Promise<void> {
-  await offlineDb.syncQueue.put(item);
-}
-
-export async function listQueuedSessions(userId: string): Promise<QueuedSyncItem[]> {
-  return offlineDb.syncQueue.where('userId').equals(userId).toArray();
-}
-
-export async function clearQueuedSessions(userId: string): Promise<void> {
-  await offlineDb.syncQueue.where('userId').equals(userId).delete();
-}
-
-export async function resetOfflineData(userId: string): Promise<void> {
-  await Promise.all([clearActiveWorkout(userId), clearQueuedSessions(userId)]);
+export async function clearAppData(userId: string): Promise<void> {
+  await enqueueWrite(userId, () => offlineDb.appData.delete(userId));
+  clearLegacyLocalData(userId);
 }

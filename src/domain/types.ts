@@ -37,6 +37,15 @@ export interface TemplateDay {
   exercises: TemplateExercise[];
 }
 
+export interface PlannedSetProgression {
+  weightKg?: number;
+  reps?: number;
+  leftReps?: number;
+  rightReps?: number;
+  seconds?: number;
+  bandColourIds?: string[];
+}
+
 export interface WorkoutTemplate {
   id: string;
   name: string;
@@ -54,6 +63,8 @@ export interface SessionSet {
   tracksSides?: boolean;
   target: SetValues;
   actual: SetValues;
+  /** A reviewed target for the next workout. It is not applied until the session is saved. */
+  proposedNextTarget?: PlannedSetProgression;
   completedAt?: string;
 }
 
@@ -91,6 +102,8 @@ export interface WorkoutSession {
 export interface ActiveWorkout {
   session: WorkoutSession;
   activeRest?: ActiveRest;
+  selectedExerciseId?: string;
+  selectedSetId?: string;
 }
 
 export interface AppData {
@@ -104,15 +117,8 @@ export interface AppData {
   };
 }
 
-export interface QueuedSyncItem {
-  id: string;
-  userId: string;
-  createdAt: string;
-  type: 'session_completed';
-  payload: WorkoutSession;
-}
-
 export interface PersonalBest {
+  exerciseId?: string;
   exerciseName: string;
   mode: MetricMode;
   label: string;
@@ -121,6 +127,7 @@ export interface PersonalBest {
 }
 
 export interface Plateau {
+  exerciseId?: string;
   exerciseName: string;
   mode: MetricMode;
   appearances: number;

@@ -1,13 +1,39 @@
 import 'fake-indexeddb/auto';
+import Dexie from 'dexie';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultTemplate } from '../domain/sampleData';
+import { createDefaultAppData, createDefaultTemplate } from '../domain/sampleData';
 import { createSessionFromDay } from '../domain/session';
-import { clearActiveWorkout, listQueuedSessions, loadActiveWorkout, offlineDb, queueCompletedSession, resetOfflineData, saveActiveWorkout } from './offlineDb';
+import type { WorkoutSession } from '../domain/types';
+import { hasLegacyLocalData } from './localData';
+import {
+  clearAppData,
+  loadAppData,
+  offlineDb,
+  resetAppData,
+  saveAppData,
+} from './offlineDb';
 
 const userId = 'local-user';
 
-describe('offline IndexedDB storage', () => {
+function storeLegacy(data: unknown, targetUserId = userId): void {
+  localStorage.setItem(`exercise-tracker:data:${targetUserId}`, JSON.stringify(data));
+}
+
+function completedSession(id = 'session'): WorkoutSession {
+  const session = createSessionFromDay(createDefaultTemplate().days[0]);
+  const completedAt = '2026-01-01T10:30:00.000Z';
+  return {
+    ...session,
+    id,
+    startedAt: '2026-01-01T10:00:00.000Z',
+    completedAt,
+    sets: session.sets.map((set) => ({ ...set, completedAt })),
+  };
+}
+
+describe('canonical offline IndexedDB repository', () => {
   beforeEach(async () => {
+    localStorage.clear();
     await offlineDb.delete();
     await offlineDb.open();
   });
@@ -16,41 +42,122 @@ describe('offline IndexedDB storage', () => {
     offlineDb.close();
   });
 
-  it('saves and clears an active workout', async () => {
-    const session = createSessionFromDay(createDefaultTemplate().days[0]);
+  it('round-trips the complete app snapshot, including active selection', async () => {
+    const data = createDefaultAppData(userId);
+    const session = createSessionFromDay(data.template.days[0]);
+    data.sessions = [completedSession()];
+    data.activeWorkout = {
+      session,
+      selectedExerciseId: session.sets[1].exerciseId,
+      selectedSetId: session.sets[1].id,
+    };
 
-    await saveActiveWorkout(userId, { session });
-    expect((await loadActiveWorkout(userId))?.session.id).toBe(session.id);
+    await saveAppData(data);
+    const loaded = await loadAppData(userId);
 
-    await clearActiveWorkout(userId);
-    expect(await loadActiveWorkout(userId)).toBeUndefined();
+    expect(loaded.sessions[0].id).toBe('session');
+    expect(loaded.activeWorkout?.selectedSetId).toBe(session.sets[1].id);
+    expect(offlineDb.tables.map((table) => table.name)).toEqual(['appData']);
   });
 
-  it('queues completed sessions and resets local offline records for one user', async () => {
-    const session = createSessionFromDay(createDefaultTemplate().days[0]);
+  it('migrates a valid legacy localStorage snapshot exactly once', async () => {
+    const legacy = createDefaultAppData(userId);
+    legacy.settings.theme = 'dark';
+    legacy.template.days[0].exercises[0].sets[0].target.reps = 8;
+    storeLegacy(legacy);
 
-    await saveActiveWorkout(userId, { session });
-    await queueCompletedSession({
-      id: 'sync-local',
+    const loaded = await loadAppData(userId);
+
+    expect(loaded.settings.theme).toBe('dark');
+    expect(loaded.template.days[0].exercises[0].sets[0].target.reps).toBe(8);
+    expect(hasLegacyLocalData(userId)).toBe(false);
+    expect((await offlineDb.appData.get(userId))?.data.settings.theme).toBe('dark');
+  });
+
+  it('upgrades version-1 active workout data and removes both legacy tables', async () => {
+    offlineDb.close();
+    await Dexie.delete('ExerciseTracker');
+
+    const legacyData = createDefaultAppData(userId);
+    storeLegacy(legacyData);
+    const activeWorkout = { session: createSessionFromDay(legacyData.template.days[0]) };
+    const legacyDb = new Dexie('ExerciseTracker');
+    legacyDb.version(1).stores({
+      activeWorkouts: 'id, userId, updatedAt',
+      syncQueue: 'id, userId, createdAt, type',
+    });
+    await legacyDb.open();
+    await legacyDb.table('activeWorkouts').put({
+      id: userId,
+      userId,
+      updatedAt: '2026-01-01T10:00:00.000Z',
+      activeWorkout,
+    });
+    await legacyDb.table('syncQueue').put({
+      id: 'obsolete',
       userId,
       createdAt: '2026-01-01T10:00:00.000Z',
       type: 'session_completed',
-      payload: session,
+      payload: completedSession(),
     });
-    await queueCompletedSession({
-      id: 'sync-other',
-      userId: 'other-user',
-      createdAt: '2026-01-01T10:00:00.000Z',
-      type: 'session_completed',
-      payload: session,
-    });
+    legacyDb.close();
 
-    expect(await listQueuedSessions(userId)).toHaveLength(1);
+    await offlineDb.open();
+    const loaded = await loadAppData(userId);
 
-    await resetOfflineData(userId);
-
-    expect(await loadActiveWorkout(userId)).toBeUndefined();
-    expect(await listQueuedSessions(userId)).toEqual([]);
-    expect(await listQueuedSessions('other-user')).toHaveLength(1);
+    expect(loaded.activeWorkout?.session.id).toBe(activeWorkout.session.id);
+    expect(offlineDb.tables.map((table) => table.name)).toEqual(['appData']);
   });
+
+  it('serializes rapid saves so the last requested snapshot wins', async () => {
+    const first = createDefaultAppData(userId);
+    first.settings.theme = 'dark';
+    const second = structuredClone(first);
+    second.settings.theme = 'light';
+
+    await Promise.all([saveAppData(first), saveAppData(second)]);
+
+    expect((await loadAppData(userId)).settings.theme).toBe('light');
+  });
+
+  it('rejects invalid data rather than replacing the canonical snapshot', async () => {
+    const valid = createDefaultAppData(userId);
+    valid.settings.theme = 'dark';
+    await saveAppData(valid);
+    const invalid = { ...valid, sessions: 'bad' };
+
+    await expect(saveAppData(invalid as never)).rejects.toThrow('data.sessions must be an array');
+    expect((await loadAppData(userId)).settings.theme).toBe('dark');
+  });
+
+  it('leaves a schema-invalid canonical record untouched and reports the load error', async () => {
+    const invalid = { ...createDefaultAppData(userId), sessions: 'recover-me' };
+    await offlineDb.appData.put({
+      userId,
+      updatedAt: '2026-01-01T10:00:00.000Z',
+      data: invalid as never,
+    });
+
+    await expect(loadAppData(userId)).rejects.toThrow('was left untouched: data.sessions must be an array');
+
+    const retained = await offlineDb.appData.get(userId);
+    expect((retained?.data as unknown as { sessions: unknown }).sessions).toBe('recover-me');
+  });
+
+  it('keeps reset and clear scoped to one user', async () => {
+    const local = createDefaultAppData(userId);
+    local.settings.theme = 'dark';
+    const other = createDefaultAppData('other-user');
+    other.settings.theme = 'dark';
+    await saveAppData(local);
+    await saveAppData(other);
+
+    expect((await resetAppData(userId)).settings.theme).toBe('light');
+    expect((await loadAppData('other-user')).settings.theme).toBe('dark');
+
+    await clearAppData(userId);
+    expect(await offlineDb.appData.get(userId)).toBeUndefined();
+    expect(await offlineDb.appData.get('other-user')).toBeDefined();
+  });
+
 });
