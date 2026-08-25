@@ -3,7 +3,6 @@ import type {
   AppData,
   BandColour,
   MetricMode,
-  PlannedSetProgression,
   RestEvent,
   SessionSet,
   TemplateDay,
@@ -17,6 +16,8 @@ type RecordValue = Record<string, unknown>;
 export interface AppDataValidationOptions {
   /** Version-1 data may omit a rep target; normalization supplies the legacy default. */
   allowMissingTargetReps?: boolean;
+  /** Stored data and pre-v3 exports may contain retired side-specific fields. */
+  allowLegacySideFields?: boolean;
 }
 
 export type AppDataValidationResult = { ok: true; data: AppData } | { ok: false; error: string };
@@ -119,10 +120,16 @@ function validateSetValues(
   path: string,
   mode: MetricMode,
   knownBandIds: ReadonlySet<string>,
-  options: { target: boolean; allowMissingTargetReps: boolean },
+  options: { target: boolean; allowMissingTargetReps: boolean; allowLegacySideFields: boolean },
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
 
+  if (!options.allowLegacySideFields && (value.leftReps !== undefined || value.rightReps !== undefined)) {
+    return `${path} contains retired left/right rep values.`;
+  }
+
+  // leftReps/rightReps remain readable only so older local snapshots and JSON
+  // exports can be normalized into the single canonical reps value.
   for (const key of ['weightKg', 'reps', 'leftReps', 'rightReps', 'seconds'] as const) {
     if (value[key] === undefined) continue;
     const numberError = finiteNumberError(value[key], `${path}.${key}`, {
@@ -174,10 +181,17 @@ function validateProgression(
   path: string,
   mode: MetricMode,
   knownBandIds: ReadonlySet<string>,
+  allowLegacySideFields: boolean,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
-  const progression = value as PlannedSetProgression;
-  const progressionKeys = new Set(['weightKg', 'reps', 'leftReps', 'rightReps', 'seconds', 'bandColourIds']);
+  const progression = value;
+  const progressionKeys = new Set([
+    'weightKg',
+    'reps',
+    ...(allowLegacySideFields ? ['leftReps', 'rightReps'] : []),
+    'seconds',
+    'bandColourIds',
+  ]);
   const unsupportedKey = Object.keys(value).find((key) => !progressionKeys.has(key));
   if (unsupportedKey) return `${path}.${unsupportedKey} is not a supported proposed target.`;
 
@@ -206,14 +220,14 @@ function validateProgression(
   ) {
     return `${path} contains values that are not valid for a timed exercise.`;
   }
-  const knownProgressionKeys: Array<keyof PlannedSetProgression> = [
+  const knownProgressionKeys = [
     'weightKg',
     'reps',
     'leftReps',
     'rightReps',
     'seconds',
     'bandColourIds',
-  ];
+  ] as const;
   if (knownProgressionKeys.every((key) => progression[key] === undefined)) {
     return `${path} must contain at least one proposed target.`;
   }
@@ -234,6 +248,7 @@ function validateTemplateSet(
     validateSetValues(value.target, `${path}.target`, mode, knownBandIds, {
       target: true,
       allowMissingTargetReps: Boolean(options.allowMissingTargetReps),
+      allowLegacySideFields: Boolean(options.allowLegacySideFields),
     })
   );
 }
@@ -245,6 +260,7 @@ function validateTemplateExercise(
   options: AppDataValidationOptions,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
+  if (!options.allowLegacySideFields && value.tracksSides !== undefined) return `${path}.tracksSides is no longer supported.`;
   const baseError =
     idError(value.id, `${path}.id`) ??
     stringError(value.name, `${path}.name`, 'an exercise name') ??
@@ -345,8 +361,10 @@ function validateSessionSet(
   path: string,
   knownBandIds: ReadonlySet<string>,
   sessionStartedAt: string,
+  options: AppDataValidationOptions,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
+  if (!options.allowLegacySideFields && value.tracksSides !== undefined) return `${path}.tracksSides is no longer supported.`;
   const baseError =
     idError(value.id, `${path}.id`) ??
     idError(value.templateSetId, `${path}.templateSetId`) ??
@@ -362,16 +380,24 @@ function validateSessionSet(
   const targetError = validateSetValues(value.target, `${path}.target`, value.mode as MetricMode, knownBandIds, {
     target: true,
     allowMissingTargetReps: false,
+    allowLegacySideFields: Boolean(options.allowLegacySideFields),
   });
   if (targetError) return targetError;
   const actualError = validateSetValues(value.actual, `${path}.actual`, value.mode as MetricMode, knownBandIds, {
     target: false,
     allowMissingTargetReps: false,
+    allowLegacySideFields: Boolean(options.allowLegacySideFields),
   });
   if (actualError) return actualError;
 
   if (value.proposedNextTarget !== undefined) {
-    const progressionError = validateProgression(value.proposedNextTarget, `${path}.proposedNextTarget`, value.mode as MetricMode, knownBandIds);
+    const progressionError = validateProgression(
+      value.proposedNextTarget,
+      `${path}.proposedNextTarget`,
+      value.mode as MetricMode,
+      knownBandIds,
+      Boolean(options.allowLegacySideFields),
+    );
     if (progressionError) return progressionError;
   }
   if (value.completedAt !== undefined) {
@@ -409,6 +435,7 @@ function validateSession(
   path: string,
   knownBandIds: ReadonlySet<string>,
   requireCompleted: boolean,
+  options: AppDataValidationOptions,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
   const baseError =
@@ -418,7 +445,7 @@ function validateSession(
     isoDateError(value.startedAt, `${path}.startedAt`) ??
     arrayError(value.sets, `${path}.sets`, 10_000) ??
     arrayError(value.restEvents, `${path}.restEvents`, 10_000) ??
-    validateTemplateDay(value.snapshot, `${path}.snapshot`, knownBandIds, {});
+    validateTemplateDay(value.snapshot, `${path}.snapshot`, knownBandIds, options);
   if (baseError) return baseError;
 
   if (value.completedAt !== undefined) {
@@ -435,7 +462,7 @@ function validateSession(
 
   const sets = value.sets as unknown[];
   for (let index = 0; index < sets.length; index += 1) {
-    const error = validateSessionSet(sets[index], `${path}.sets[${index}]`, knownBandIds, value.startedAt as string);
+    const error = validateSessionSet(sets[index], `${path}.sets[${index}]`, knownBandIds, value.startedAt as string, options);
     if (error) return error;
   }
   const typedSets = sets as SessionSet[];
@@ -504,9 +531,14 @@ function validateActiveRest(value: unknown, path: string, session: WorkoutSessio
   return undefined;
 }
 
-function validateActiveWorkout(value: unknown, path: string, knownBandIds: ReadonlySet<string>): string | undefined {
+function validateActiveWorkout(
+  value: unknown,
+  path: string,
+  knownBandIds: ReadonlySet<string>,
+  options: AppDataValidationOptions,
+): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
-  const sessionError = validateSession(value.session, `${path}.session`, knownBandIds, false);
+  const sessionError = validateSession(value.session, `${path}.session`, knownBandIds, false, options);
   if (sessionError) return sessionError;
   const session = value.session as WorkoutSession;
 
@@ -575,7 +607,7 @@ export function validateAppData(value: unknown, options: AppDataValidationOption
   if (sessionsError) return { ok: false, error: sessionsError };
   const sessions = value.sessions as unknown[];
   for (let index = 0; index < sessions.length; index += 1) {
-    const sessionError = validateSession(sessions[index], `data.sessions[${index}]`, knownBandIds, true);
+    const sessionError = validateSession(sessions[index], `data.sessions[${index}]`, knownBandIds, true, options);
     if (sessionError) return { ok: false, error: sessionError };
   }
   const typedSessions = sessions as WorkoutSession[];
@@ -587,7 +619,7 @@ export function validateAppData(value: unknown, options: AppDataValidationOption
   if (duplicateSessionError) return { ok: false, error: duplicateSessionError };
 
   if (value.activeWorkout !== undefined) {
-    const activeError = validateActiveWorkout(value.activeWorkout, 'data.activeWorkout', knownBandIds);
+    const activeError = validateActiveWorkout(value.activeWorkout, 'data.activeWorkout', knownBandIds, options);
     if (activeError) return { ok: false, error: activeError };
     const activeWorkout = value.activeWorkout as ActiveWorkout;
     if (typedSessions.some((session) => session.id === activeWorkout.session.id)) {
@@ -605,5 +637,5 @@ export function validateAppData(value: unknown, options: AppDataValidationOption
 
 export function validateActiveWorkoutData(value: unknown, bandColours: BandColour[]): value is ActiveWorkout {
   const bandIds = new Set(bandColours.map((band) => band.id));
-  return validateActiveWorkout(value, 'activeWorkout', bandIds) === undefined;
+  return validateActiveWorkout(value, 'activeWorkout', bandIds, { allowLegacySideFields: true }) === undefined;
 }

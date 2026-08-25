@@ -85,31 +85,6 @@ describe('focused workout flow helpers', () => {
     expect(stageSetProgression(weighted, { weightKg: 62.5 }).proposedNextTarget).toBeUndefined();
   });
 
-  it('requires both sides to meet target before updating unilateral set progression', () => {
-    const template = createDefaultTemplate();
-    const unilateralTemplate = {
-      ...template,
-      days: template.days.map((day, dayIndex) =>
-        dayIndex === 0
-          ? {
-              ...day,
-              exercises: day.exercises.map((exercise, exerciseIndex) => (exerciseIndex === 2 ? { ...exercise, tracksSides: true } : exercise)),
-            }
-          : day,
-      ),
-    };
-    const session = createSessionFromDay(unilateralTemplate.days[0]);
-    const set = session.sets.find((item) => item.exerciseName === template.days[0].exercises[2].name)!;
-    const missedRight = { ...set, actual: { ...set.actual, leftReps: 10, rightReps: 9, reps: 9 } };
-    const bothComplete = { ...set, actual: { ...set.actual, leftReps: 10, rightReps: 10, reps: 10 } };
-
-    const missedUpdate = applySetProgression(unilateralTemplate, session, missedRight, { weightKg: 14 });
-    const completedUpdate = applySetProgression(unilateralTemplate, session, bothComplete, { weightKg: 14 });
-
-    expect(missedUpdate.days[0].exercises[2].sets[0].target.weightKg).toBe(12);
-    expect(completedUpdate.days[0].exercises[2].sets[0].target.weightKg).toBe(14);
-  });
-
   it('updates the planned band after a band rep target is met', () => {
     const template = createDefaultTemplate();
     const session = createSessionFromDay(template.days[0]);

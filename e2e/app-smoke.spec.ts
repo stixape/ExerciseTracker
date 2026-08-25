@@ -84,6 +84,26 @@ test('loads direct routes and exposes semantic primary navigation', async ({ pag
   }
 });
 
+test('light mode is the explicit default and display choices persist', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openApp(page);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const lightButton = page.getByRole('button', { name: 'Light' });
+  const darkButton = page.getByRole('button', { name: 'Dark' });
+  await expect(lightButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(darkButton).toHaveAttribute('aria-pressed', 'false');
+
+  await darkButton.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(darkButton).toHaveAttribute('aria-pressed', 'true');
+
+  await lightButton.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
 test('workout preview does not start a session and active entries survive reload', async ({ page }) => {
   await importWorkout(page, 'Strength test', [
     { id: 'exercise_weight', name: 'Test Squat', mode: 'weighted_reps', target: { weightKg: 60, reps: 5 } },
@@ -173,7 +193,9 @@ test('performed bands and over-target reps stay separate from reviewed next targ
   await page.getByRole('link', { name: 'Plan' }).click();
   const bandCard = page.locator('details.plan-exercise-card').filter({ hasText: 'Band Row' });
   await bandCard.locator('summary').click();
-  await expect(bandCard.getByRole('button', { name: 'Blue band' })).toHaveAttribute('aria-pressed', 'true');
+  const selectedBand = bandCard.getByRole('button', { name: 'Blue band' });
+  await expect(selectedBand).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectedBand).toHaveCSS('box-shadow', /6px/);
   await expect(bandCard.getByLabel('Reps')).toHaveValue('20');
 });
 
@@ -219,6 +241,7 @@ test('plan editors are collapsed, labelled, and expose selected state', async ({
   await firstCard.locator('summary').click();
   await expect(firstCard.getByLabel('Exercise 1 name')).toBeVisible();
   await expect(firstCard.getByRole('button', { name: 'Weight' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstCard.getByText('Left/right reps')).toHaveCount(0);
   await expect(page.getByRole('tab', { selected: true })).toBeVisible();
 });
 

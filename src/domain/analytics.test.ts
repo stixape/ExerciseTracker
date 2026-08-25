@@ -59,12 +59,10 @@ describe('analytics', () => {
     expect(bests.find((best) => best.label.startsWith('Best set volume'))?.label).toBe('Best set volume: 480 kg·reps');
   });
 
-  it('counts both recorded sides in unilateral set volume', () => {
-    const set = session('one', 20, 8, '2026-01-01T10:00:00Z').sets[0];
-    set.tracksSides = true;
-    set.actual = { weightKg: 20, reps: 8, leftReps: 8, rightReps: 7 };
+  it('uses the single performed rep count for set volume', () => {
+    const set = session('one', 20, 7, '2026-01-01T10:00:00Z').sets[0];
 
-    expect(calculateSetVolume(set)).toBe(300);
+    expect(calculateSetVolume(set)).toBe(140);
   });
 
   it('ignores sets from sessions that have not been completed', () => {

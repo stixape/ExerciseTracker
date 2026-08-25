@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { getTemplateDayForToday } from './calendar';
-import { createDefaultTemplate } from './sampleData';
+import { createDefaultAppData, createDefaultTemplate } from './sampleData';
 
 describe('default template', () => {
+  it('uses the light appearance by default', () => {
+    expect(createDefaultAppData().settings.theme).toBe('light');
+  });
+
   it('includes Saturday as a planned day', () => {
     const template = createDefaultTemplate();
     expect(template.days.map((day) => day.label)).toContain('Saturday');

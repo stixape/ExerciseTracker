@@ -34,7 +34,6 @@ import type {
   SetValues,
   TemplateDay,
   TemplateExercise,
-  TemplateSet,
   WorkoutSession,
 } from './domain/types';
 import { primeAlarmAudio } from './lib/alarm';
@@ -386,32 +385,6 @@ function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandCo
   };
 }
 
-function cloneSetValues(values: SetValues): SetValues {
-  return {
-    ...values,
-    bandColourIds: [...(values.bandColourIds ?? [])],
-  };
-}
-
-function ensureUnilateralSetCount(sets: TemplateSet[], mode: MetricMode, exerciseIndex: number, bandColours: BandColour[]): TemplateSet[] {
-  const nextSets = sets.map((set, index) => ({
-    ...set,
-    setNumber: index + 1,
-    target: cloneSetValues(set.target),
-  }));
-
-  while (nextSets.length < 6) {
-    const sourceTarget = nextSets.at(-1)?.target ?? getDefaultTargetForMode(mode, exerciseIndex, bandColours);
-    nextSets.push({
-      id: createId('template_set'),
-      setNumber: nextSets.length + 1,
-      target: cloneSetValues(sourceTarget),
-    });
-  }
-
-  return nextSets;
-}
-
 function PlanExerciseEditor({
   exercise,
   exerciseIndex,
@@ -429,19 +402,10 @@ function PlanExerciseEditor({
     onChange((current) => ({
       ...current,
       mode,
-      tracksSides: mode === 'timed_hold' ? undefined : current.tracksSides,
       sets: current.sets.map((set) => ({
         ...set,
         target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, set.target),
       })),
-    }));
-  }
-
-  function changeSideTracking(tracksSides: boolean) {
-    onChange((current) => ({
-      ...current,
-      tracksSides: tracksSides ? true : undefined,
-      sets: tracksSides ? ensureUnilateralSetCount(current.sets, current.mode, exerciseIndex, bandColours) : current.sets,
     }));
   }
 
@@ -499,20 +463,6 @@ function PlanExerciseEditor({
             Bands
           </button>
         </div>
-
-      {exercise.mode !== 'timed_hold' && (
-        <label className="switch-row exercise-option-row">
-          <span>
-            <strong>Left/right reps</strong>
-          </span>
-          <input
-            type="checkbox"
-            aria-label={`Track sides for ${exercise.name}`}
-            checked={Boolean(exercise.tracksSides)}
-            onChange={(event) => changeSideTracking(event.target.checked)}
-          />
-        </label>
-      )}
 
       <div className="set-grid">
         {exercise.sets.map((set) => (
@@ -1124,25 +1074,33 @@ function SettingsPage() {
         <div className="section-heading">
           <h2>Display</h2>
         </div>
-        <label className="switch-row">
-          <span className="switch-label">
-            {isDarkMode ? <Moon size={20} /> : <Sun size={20} />}
-            Dark mode
-          </span>
-          <input
-            type="checkbox"
-            checked={isDarkMode}
-            onChange={(event) =>
-              saveData((current) => ({
-                ...current,
-                settings: {
-                  ...current.settings,
-                  theme: event.target.checked ? 'dark' : 'light',
-                },
-              }))
-            }
-          />
-        </label>
+        <div className="appearance-setting">
+          <p className="muted-text">Light is the default. Choose dark when you prefer lower brightness.</p>
+          <div className="segmented-control appearance-control" role="group" aria-label="Colour mode">
+            <button
+              className={isDarkMode ? '' : 'active'}
+              type="button"
+              aria-pressed={!isDarkMode}
+              onClick={() =>
+                saveData((current) => ({ ...current, settings: { ...current.settings, theme: 'light' } }))
+              }
+            >
+              <Sun size={18} aria-hidden="true" />
+              Light
+            </button>
+            <button
+              className={isDarkMode ? 'active' : ''}
+              type="button"
+              aria-pressed={isDarkMode}
+              onClick={() =>
+                saveData((current) => ({ ...current, settings: { ...current.settings, theme: 'dark' } }))
+              }
+            >
+              <Moon size={18} aria-hidden="true" />
+              Dark
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="section-block">

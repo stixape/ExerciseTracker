@@ -47,7 +47,7 @@ Workout logging:
 - The active workout view emphasises only the current exercise and advances when all sets for that exercise are complete.
 - The current exercise can be manually changed from the exercise progress strip; when a manually selected exercise is completed, the app returns to the earliest incomplete exercise.
 - After a set is completed, the app starts a rest timer if another set remains.
-- Rest duration is fixed in v1: 3 minutes after ordinary sets in the first exercise, 2 minutes after ordinary sets in later exercises, and 1 minute for side-tracked sets.
+- Rest duration is fixed in v1: 3 minutes after sets in the first exercise and 2 minutes after sets in later exercises.
 - No timer starts after the final set.
 - The timer screen shows countdown, next exercise/set, and a skip control.
 - When the timer ends, the app plays a short alarm sound, shows a visual completion state, and uses vibration where supported.

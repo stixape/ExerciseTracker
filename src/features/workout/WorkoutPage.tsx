@@ -515,9 +515,6 @@ function formatProposedTarget(set: SessionSet, bandColours: BandColour[]): strin
   if (proposal.seconds !== undefined) parts.push(`${proposal.seconds}s`);
   if (proposal.bandColourIds !== undefined) parts.push(formatBandNames(proposal.bandColourIds, bandColours));
   if (proposal.reps !== undefined) parts.push(`${proposal.reps} reps`);
-  if (proposal.leftReps !== undefined || proposal.rightReps !== undefined) {
-    parts.push(`L${proposal.leftReps ?? '—'}/R${proposal.rightReps ?? '—'}`);
-  }
   return parts.length ? `Next time: ${parts.join(' × ')}` : undefined;
 }
 
@@ -751,7 +748,7 @@ function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: Ban
     return (
       <section className="target-summary two" aria-label="Target">
         <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
-        <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
+        <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
       </section>
     );
   }
@@ -759,7 +756,7 @@ function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: Ban
   return (
     <section className="target-summary two" aria-label="Target">
       <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
-      <ValueTile label={set.tracksSides ? 'Target reps each side' : 'Target reps'} value={String(set.target.reps ?? 0)} />
+      <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
     </section>
   );
 }
@@ -794,25 +791,7 @@ function ActualSetEditor({
     onProgressionChange({ ...progression, ...next });
   }
 
-  function patchSideReps(side: 'left' | 'right', value: number | undefined) {
-    const targetReps = set.target.reps ?? 0;
-    const leftReps = side === 'left' ? (value ?? 0) : set.actual.leftReps ?? set.actual.reps ?? targetReps;
-    const rightReps = side === 'right' ? (value ?? 0) : set.actual.rightReps ?? set.actual.reps ?? targetReps;
-    patch({
-      leftReps,
-      rightReps,
-      reps: Math.min(leftReps, rightReps),
-    });
-  }
-
-  const repControls = set.tracksSides ? (
-    <div className="side-rep-grid">
-      <NumberStepper label="Performed left reps" value={set.actual.leftReps ?? set.actual.reps} onChange={(reps) => patchSideReps('left', reps)} />
-      <NumberStepper label="Performed right reps" value={set.actual.rightReps ?? set.actual.reps} onChange={(reps) => patchSideReps('right', reps)} />
-    </div>
-  ) : (
-    <NumberStepper label="Performed reps" value={set.actual.reps} onChange={(reps) => patch({ reps })} />
-  );
+  const repControls = <NumberStepper label="Performed reps" value={set.actual.reps} onChange={(reps) => patch({ reps })} />;
 
   if (set.mode === 'timed_hold') {
     return (
@@ -857,7 +836,7 @@ function ActualSetEditor({
             onChange={(bandColourIds) => patchProgression({ bandColourIds })}
           />
           <NumberStepper
-            label={set.tracksSides ? 'Next target reps each side' : 'Next target reps'}
+            label="Next target reps"
             value={progression.reps}
             placeholder={set.target.reps}
             onChange={(reps) => patchProgression({ reps })}
@@ -884,7 +863,7 @@ function ActualSetEditor({
           onChange={(weightKg) => patchProgression({ weightKg })}
         />
         <NumberStepper
-          label={set.tracksSides ? 'Next target reps each side' : 'Next target reps'}
+          label="Next target reps"
           value={progression.reps}
           placeholder={set.target.reps}
           onChange={(reps) => patchProgression({ reps })}

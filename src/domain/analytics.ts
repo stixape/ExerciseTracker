@@ -10,11 +10,7 @@ function safeMetric(value: number | undefined): number {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-/** Total performed repetitions, counting each recorded side for unilateral work. */
 export function getPerformedRepCount(set: SessionSet): number {
-  if (set.tracksSides && (set.actual.leftReps !== undefined || set.actual.rightReps !== undefined)) {
-    return safeMetric(set.actual.leftReps) + safeMetric(set.actual.rightReps);
-  }
   return safeMetric(set.actual.reps);
 }
 
@@ -35,8 +31,7 @@ function exerciseKey(set: SessionSet): string {
 }
 
 function repsLabel(set: SessionSet): string {
-  if (!set.tracksSides) return `${safeMetric(set.actual.reps)}`;
-  return `L${safeMetric(set.actual.leftReps ?? set.actual.reps)}/R${safeMetric(set.actual.rightReps ?? set.actual.reps)}`;
+  return `${safeMetric(set.actual.reps)}`;
 }
 
 export function calculatePersonalBests(sessions: WorkoutSession[]): PersonalBest[] {

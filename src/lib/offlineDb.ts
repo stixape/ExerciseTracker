@@ -44,6 +44,14 @@ class ExerciseTrackerDb extends Dexie {
       appData: '&userId, updatedAt',
       activeWorkouts: null,
     });
+
+    // Remove the retired left/right repetition shape from every canonical
+    // snapshot while preserving workouts, set counts, and recorded rests.
+    this.version(4)
+      .stores({
+        appData: '&userId, updatedAt',
+      })
+      .upgrade((transaction) => migrateVersionThree(transaction));
   }
 }
 
@@ -66,6 +74,17 @@ async function migrateVersionOne(transaction: Transaction): Promise<void> {
       updatedAt: record.updatedAt,
       data: restored.data,
     });
+  }
+}
+
+async function migrateVersionThree(transaction: Transaction): Promise<void> {
+  const appDataTable = transaction.table<AppDataRecord>('appData');
+  const records = await appDataTable.toArray();
+
+  for (const record of records) {
+    const restored = restoreAppData(record.data, record.userId, false);
+    if (!restored.ok) throw new Error(`Stored ExerciseTracker data could not be upgraded: ${restored.error}`);
+    await appDataTable.put({ ...record, data: restored.data });
   }
 }
 

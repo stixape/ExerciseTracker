@@ -47,6 +47,45 @@ describe('local data import, normalization, and legacy fallback', () => {
     expect(imported.ok && imported.data.template.days[0].exercises[0].sets[0].target.reps).toBe(8);
   });
 
+  it('migrates version-2 side tracking into one canonical reps value', () => {
+    const data = createDefaultAppData('exported-user');
+    const session = completedSession(data);
+    const templateExercise = data.template.days[0].exercises[0] as unknown as Record<string, unknown>;
+    const snapshotExercise = session.snapshot.exercises[0] as unknown as Record<string, unknown>;
+    const legacySet = session.sets[0] as unknown as Record<string, unknown>;
+    const legacyActual = legacySet.actual as Record<string, unknown>;
+
+    templateExercise.tracksSides = true;
+    snapshotExercise.tracksSides = true;
+    legacySet.tracksSides = true;
+    legacySet.actual = { ...legacyActual, reps: 8, leftReps: 8, rightReps: 7 };
+    legacySet.proposedNextTarget = { weightKg: 62.5, leftReps: 9, rightReps: 8 };
+    data.sessions = [session];
+
+    const result = parseJsonImport(JSON.stringify({ version: 2, data }), userId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.sessions[0].sets[0].actual.reps).toBe(7);
+    expect(result.data.sessions[0].sets[0].proposedNextTarget).toEqual({ weightKg: 62.5, reps: 8 });
+    expect(result.data.sessions[0].sets[0].actual).not.toHaveProperty('leftReps');
+    expect(result.data.sessions[0].sets[0].actual).not.toHaveProperty('rightReps');
+    expect(result.data.sessions[0].sets[0]).not.toHaveProperty('tracksSides');
+    expect(result.data.sessions[0].snapshot.exercises[0]).not.toHaveProperty('tracksSides');
+    expect(result.data.template.days[0].exercises[0]).not.toHaveProperty('tracksSides');
+  });
+
+  it('rejects retired side-specific fields in a current version export', () => {
+    const data = createDefaultAppData(userId);
+    const exercise = data.template.days[0].exercises[0] as unknown as Record<string, unknown>;
+    exercise.tracksSides = true;
+
+    const result = parseJsonImport(JSON.stringify({ version: 3, data }), userId);
+
+    expect(result).toMatchObject({ ok: false });
+    if (!result.ok) expect(result.error).toContain('tracksSides is no longer supported');
+  });
+
   it('supplies the legacy rep default only when a version-1 target omitted reps', () => {
     const data = createDefaultAppData(userId);
     delete data.template.days[0].exercises[0].sets[0].target.reps;
@@ -60,9 +99,9 @@ describe('local data import, normalization, and legacy fallback', () => {
 
   it('rejects invalid JSON and unsupported export versions with clear errors', () => {
     expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
-    expect(parseJsonImport(JSON.stringify({ version: 3, data: createDefaultAppData(userId) }), userId)).toEqual({
+    expect(parseJsonImport(JSON.stringify({ version: 4, data: createDefaultAppData(userId) }), userId)).toEqual({
       ok: false,
-      error: 'Import file uses unsupported version 3. Supported versions are 1-2.',
+      error: 'Import file uses unsupported version 4. Supported versions are 1-3.',
     });
   });
 

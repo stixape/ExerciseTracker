@@ -10,8 +10,6 @@ export interface BandColour {
 export interface SetValues {
   weightKg?: number;
   reps?: number;
-  leftReps?: number;
-  rightReps?: number;
   seconds?: number;
   bandColourIds?: string[];
 }
@@ -26,7 +24,6 @@ export interface TemplateExercise {
   id: string;
   name: string;
   mode: MetricMode;
-  tracksSides?: boolean;
   sets: TemplateSet[];
 }
 
@@ -40,8 +37,6 @@ export interface TemplateDay {
 export interface PlannedSetProgression {
   weightKg?: number;
   reps?: number;
-  leftReps?: number;
-  rightReps?: number;
   seconds?: number;
   bandColourIds?: string[];
 }
@@ -60,7 +55,6 @@ export interface SessionSet {
   exerciseIndex: number;
   setNumber: number;
   mode: MetricMode;
-  tracksSides?: boolean;
   target: SetValues;
   actual: SetValues;
   /** A reviewed target for the next workout. It is not applied until the session is saved. */

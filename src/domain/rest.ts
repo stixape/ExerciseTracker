@@ -1,8 +1,7 @@
 import type { SessionSet, WorkoutSession } from './types';
 
-export function getRestDurationSeconds(exerciseIndex: number, hasNextSet: boolean, tracksSides = false): number {
+export function getRestDurationSeconds(exerciseIndex: number, hasNextSet: boolean): number {
   if (!hasNextSet) return 0;
-  if (tracksSides) return 60;
   return exerciseIndex === 0 ? 180 : 120;
 }
 

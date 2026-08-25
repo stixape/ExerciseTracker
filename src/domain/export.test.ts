@@ -6,13 +6,16 @@ import { createSessionFromDay } from './session';
 describe('exports', () => {
   it('creates a current versioned JSON export', () => {
     const parsed = JSON.parse(createJsonExport(createDefaultAppData('user-1')));
-    expect(parsed.version).toBe(2);
+    expect(parsed.version).toBe(3);
     expect(parsed.data.userId).toBe('user-1');
     expect(Number.isNaN(Date.parse(parsed.exportedAt))).toBe(false);
   });
 
   it('includes stable exercise identity in the CSV header', () => {
-    expect(createCsvExport([])).toContain('session_id,date,day,exercise,exercise_id,set,mode');
+    const header = createCsvExport([]);
+    expect(header).toContain('session_id,date,day,exercise,exercise_id,set,mode');
+    expect(header).not.toContain('left_reps');
+    expect(header).not.toContain('right_reps');
   });
 
   it('neutralizes spreadsheet formulas in every text field', () => {

@@ -109,6 +109,36 @@ describe('canonical offline IndexedDB repository', () => {
     expect(offlineDb.tables.map((table) => table.name)).toEqual(['appData']);
   });
 
+  it('upgrades version-3 side-specific reps into the canonical single reps value', async () => {
+    offlineDb.close();
+    await Dexie.delete('ExerciseTracker');
+
+    const legacyData = createDefaultAppData(userId);
+    const session = completedSession();
+    const legacyExercise = legacyData.template.days[0].exercises[0] as unknown as Record<string, unknown>;
+    const legacySet = session.sets[0] as unknown as Record<string, unknown>;
+    legacyExercise.tracksSides = true;
+    legacySet.tracksSides = true;
+    legacySet.actual = { ...(legacySet.actual as object), reps: 8, leftReps: 8, rightReps: 7 };
+    legacyData.sessions = [session];
+
+    const legacyDb = new Dexie('ExerciseTracker');
+    legacyDb.version(3).stores({ appData: '&userId, updatedAt' });
+    await legacyDb.open();
+    await legacyDb.table('appData').put({ userId, updatedAt: '2026-01-01T11:00:00.000Z', data: legacyData });
+    legacyDb.close();
+
+    await offlineDb.open();
+    const loaded = await loadAppData(userId);
+    const stored = await offlineDb.appData.get(userId);
+
+    expect(loaded.sessions[0].sets[0].actual.reps).toBe(7);
+    expect(loaded.template.days[0].exercises[0]).not.toHaveProperty('tracksSides');
+    expect(loaded.sessions[0].sets[0]).not.toHaveProperty('tracksSides');
+    expect(loaded.sessions[0].sets[0].actual).not.toHaveProperty('leftReps');
+    expect(stored?.data.sessions[0].sets[0].actual).not.toHaveProperty('rightReps');
+  });
+
   it('serializes rapid saves so the last requested snapshot wins', async () => {
     const first = createDefaultAppData(userId);
     first.settings.theme = 'dark';
