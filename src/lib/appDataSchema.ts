@@ -18,6 +18,8 @@ export interface AppDataValidationOptions {
   allowMissingTargetReps?: boolean;
   /** Stored data and pre-v3 exports may contain retired side-specific fields. */
   allowLegacySideFields?: boolean;
+  /** Stored data and pre-v4 exports may contain the retired theme setting. */
+  allowLegacyTheme?: boolean;
 }
 
 export type AppDataValidationResult = { ok: true; data: AppData } | { ok: false; error: string };
@@ -140,7 +142,7 @@ function validateSetValues(
   }
 
   if (value.bandColourIds !== undefined) {
-    const bandError = validateBandIds(value.bandColourIds, `${path}.bandColourIds`, knownBandIds, mode === 'band_reps');
+    const bandError = validateBandIds(value.bandColourIds, `${path}.bandColourIds`, knownBandIds, false);
     if (bandError) return bandError;
   }
 
@@ -628,8 +630,16 @@ export function validateAppData(value: unknown, options: AppDataValidationOption
   }
 
   if (!isRecord(value.settings)) return { ok: false, error: 'data.settings must be an object.' };
-  if (value.settings.theme !== 'light' && value.settings.theme !== 'dark') {
+  const hideRestTimesError = optionalBooleanError(value.settings.hideRestTimes, 'data.settings.hideRestTimes');
+  if (hideRestTimesError) return { ok: false, error: hideRestTimesError };
+  if (value.settings.hideRestTimes === undefined && !options.allowLegacyTheme) {
+    return { ok: false, error: 'data.settings.hideRestTimes must be a boolean.' };
+  }
+  if (value.settings.theme !== undefined && value.settings.theme !== 'light' && value.settings.theme !== 'dark') {
     return { ok: false, error: 'data.settings.theme must be "light" or "dark".' };
+  }
+  if (value.settings.theme !== undefined && !options.allowLegacyTheme) {
+    return { ok: false, error: 'data.settings.theme is no longer supported.' };
   }
 
   return { ok: true, data: value as unknown as AppData };

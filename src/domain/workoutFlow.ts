@@ -107,10 +107,11 @@ export function formatSetTarget(set: SessionSet, bandColours: BandColour[]): str
 
 function formatBandNames(ids: string[], bandColours: BandColour[]): string {
   if (!ids.length) return 'No band';
-
-  return ids
-    .map((id) => bandColours.find((band) => band.id === id)?.name ?? 'Unknown band')
-    .join(' + ');
+  const selectedIds = new Set(ids);
+  const names = bandColours.filter((band) => selectedIds.has(band.id)).map((band) => band.name);
+  const knownIds = new Set(bandColours.map((band) => band.id));
+  names.push(...ids.filter((id) => !knownIds.has(id)).map(() => 'Unknown band'));
+  return names.join(' + ');
 }
 
 function isSetTargetMet(set: SessionSet): boolean {

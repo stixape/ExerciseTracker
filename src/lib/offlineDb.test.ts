@@ -61,17 +61,18 @@ describe('canonical offline IndexedDB repository', () => {
   });
 
   it('migrates a valid legacy localStorage snapshot exactly once', async () => {
-    const legacy = createDefaultAppData(userId);
-    legacy.settings.theme = 'dark';
-    legacy.template.days[0].exercises[0].sets[0].target.reps = 8;
+    const legacy = createDefaultAppData(userId) as unknown as Record<string, unknown>;
+    legacy.settings = { theme: 'dark' };
+    const typedLegacy = legacy as unknown as ReturnType<typeof createDefaultAppData>;
+    typedLegacy.template.days[0].exercises[0].sets[0].target.reps = 8;
     storeLegacy(legacy);
 
     const loaded = await loadAppData(userId);
 
-    expect(loaded.settings.theme).toBe('dark');
+    expect(loaded.settings.hideRestTimes).toBe(false);
     expect(loaded.template.days[0].exercises[0].sets[0].target.reps).toBe(8);
     expect(hasLegacyLocalData(userId)).toBe(false);
-    expect((await offlineDb.appData.get(userId))?.data.settings.theme).toBe('dark');
+    expect((await offlineDb.appData.get(userId))?.data.settings).toEqual({ hideRestTimes: false });
   });
 
   it('upgrades version-1 active workout data and removes both legacy tables', async () => {
@@ -141,23 +142,23 @@ describe('canonical offline IndexedDB repository', () => {
 
   it('serializes rapid saves so the last requested snapshot wins', async () => {
     const first = createDefaultAppData(userId);
-    first.settings.theme = 'dark';
+    first.settings.hideRestTimes = false;
     const second = structuredClone(first);
-    second.settings.theme = 'light';
+    second.settings.hideRestTimes = true;
 
     await Promise.all([saveAppData(first), saveAppData(second)]);
 
-    expect((await loadAppData(userId)).settings.theme).toBe('light');
+    expect((await loadAppData(userId)).settings.hideRestTimes).toBe(true);
   });
 
   it('rejects invalid data rather than replacing the canonical snapshot', async () => {
     const valid = createDefaultAppData(userId);
-    valid.settings.theme = 'dark';
+    valid.settings.hideRestTimes = true;
     await saveAppData(valid);
     const invalid = { ...valid, sessions: 'bad' };
 
     await expect(saveAppData(invalid as never)).rejects.toThrow('data.sessions must be an array');
-    expect((await loadAppData(userId)).settings.theme).toBe('dark');
+    expect((await loadAppData(userId)).settings.hideRestTimes).toBe(true);
   });
 
   it('leaves a schema-invalid canonical record untouched and reports the load error', async () => {
@@ -176,14 +177,14 @@ describe('canonical offline IndexedDB repository', () => {
 
   it('keeps reset and clear scoped to one user', async () => {
     const local = createDefaultAppData(userId);
-    local.settings.theme = 'dark';
+    local.settings.hideRestTimes = true;
     const other = createDefaultAppData('other-user');
-    other.settings.theme = 'dark';
+    other.settings.hideRestTimes = true;
     await saveAppData(local);
     await saveAppData(other);
 
-    expect((await resetAppData(userId)).settings.theme).toBe('light');
-    expect((await loadAppData('other-user')).settings.theme).toBe('dark');
+    expect((await resetAppData(userId)).settings.hideRestTimes).toBe(false);
+    expect((await loadAppData('other-user')).settings.hideRestTimes).toBe(true);
 
     await clearAppData(userId);
     expect(await offlineDb.appData.get(userId)).toBeUndefined();

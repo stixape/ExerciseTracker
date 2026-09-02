@@ -3,8 +3,8 @@ import { getTemplateDayForToday } from './calendar';
 import { createDefaultAppData, createDefaultTemplate } from './sampleData';
 
 describe('default template', () => {
-  it('uses the light appearance by default', () => {
-    expect(createDefaultAppData().settings.theme).toBe('light');
+  it('shows rest times by default', () => {
+    expect(createDefaultAppData().settings.hideRestTimes).toBe(false);
   });
 
   it('includes Saturday as a planned day', () => {

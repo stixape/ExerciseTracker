@@ -55,7 +55,7 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
           },
           bandColours: bands,
           sessions: [],
-          settings: { theme: 'light' },
+          settings: { hideRestTimes: false },
         },
       }),
     ),
@@ -84,24 +84,71 @@ test('loads direct routes and exposes semantic primary navigation', async ({ pag
   }
 });
 
-test('light mode is the explicit default and display choices persist', async ({ page }) => {
-  await page.emulateMedia({ colorScheme: 'dark' });
+test('the single default appearance has a persistent hide-rest setting', async ({ page }) => {
   await openApp(page);
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', /.+/);
 
   await page.getByRole('link', { name: 'Settings' }).click();
-  const lightButton = page.getByRole('button', { name: 'Light' });
-  const darkButton = page.getByRole('button', { name: 'Dark' });
-  await expect(lightButton).toHaveAttribute('aria-pressed', 'true');
-  await expect(darkButton).toHaveAttribute('aria-pressed', 'false');
-
-  await darkButton.click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('button', { name: 'Light' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dark' })).toHaveCount(0);
+  const hideRestTimes = page.getByRole('checkbox', { name: /Hide rest times/ });
+  await expect(hideRestTimes).not.toBeChecked();
+  await hideRestTimes.check();
   await page.reload();
-  await expect(darkButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('checkbox', { name: /Hide rest times/ })).toBeChecked();
+});
 
-  await lightButton.click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+test('hide rest times goes straight to the next set', async ({ page }) => {
+  await importWorkout(page, 'No-rest test', [
+    { id: 'exercise_one', name: 'First Move', mode: 'weighted_reps', target: { weightKg: 10, reps: 5 } },
+    { id: 'exercise_two', name: 'Second Move', mode: 'weighted_reps', target: { weightKg: 20, reps: 5 } },
+  ]);
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('checkbox', { name: /Hide rest times/ }).check();
+  await page.goto('/ExerciseTracker/workout/day_test');
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await page.getByRole('button', { name: 'Complete set' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Second Move' })).toBeVisible();
+  await expect(page.getByText('Rest period')).toHaveCount(0);
+});
+
+test('used band colours can be reordered and removed everywhere', async ({ page }) => {
+  await importWorkout(page, 'Band settings test', [
+    { id: 'exercise_band', name: 'Band Row', mode: 'band_reps', target: { reps: 10, bandColourIds: ['band_red'] } },
+  ]);
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const blueHandle = page.getByRole('button', { name: /Reorder Blue/ });
+  await blueHandle.dragTo(page.locator('.band-row[data-band-id="band_red"]'));
+  await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
+
+  await page.reload();
+  await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
+
+  acceptNextDialog(page);
+  await page.getByRole('button', { name: 'Remove Red' }).click();
+  await expect(page.getByText('Red removed from band colours, plans, and workouts.')).toBeVisible();
+  await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Green']);
+
+  await page.getByRole('link', { name: 'Plan' }).click();
+  const bandCard = page.locator('details.plan-exercise-card').filter({ hasText: 'Band Row' });
+  await bandCard.locator('summary').click();
+  expect(await bandCard.locator('.band-picker button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
+    'Blue band',
+    'Green band',
+  ]);
+
+  await page.goto('/ExerciseTracker/workout/day_test');
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  expect(
+    await page
+      .locator('.band-fieldset')
+      .first()
+      .locator('.band-picker button')
+      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))),
+  ).toEqual(['Blue for Performed bands', 'Green for Performed bands']);
 });
 
 test('workout preview does not start a session and active entries survive reload', async ({ page }) => {

@@ -6,7 +6,7 @@ import { createSessionFromDay } from './session';
 describe('exports', () => {
   it('creates a current versioned JSON export', () => {
     const parsed = JSON.parse(createJsonExport(createDefaultAppData('user-1')));
-    expect(parsed.version).toBe(3);
+    expect(parsed.version).toBe(4);
     expect(parsed.data.userId).toBe('user-1');
     expect(Number.isNaN(Date.parse(parsed.exportedAt))).toBe(false);
   });

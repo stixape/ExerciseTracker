@@ -23,6 +23,7 @@ type JsonDataMigration = (data: unknown) => unknown;
 const JSON_DATA_MIGRATIONS: Readonly<Record<number, JsonDataMigration>> = {
   1: (data) => structuredClone(data),
   2: (data) => structuredClone(data),
+  3: (data) => structuredClone(data),
 };
 
 type LegacySetValues = SetValues & { leftReps?: number; rightReps?: number };
@@ -125,6 +126,7 @@ function migrateJsonData(data: unknown, sourceVersion: number): { ok: true; data
 
 export function normalizeLocalData(data: Partial<AppData>, userId: string): AppData {
   const defaultData = createDefaultAppData(userId);
+  const hideRestTimes = data.settings?.hideRestTimes ?? defaultData.settings.hideRestTimes;
   const baseDays = (data.template?.days ?? defaultData.template.days).map(normalizeTemplateDay);
   const existingWeekdays = new Set(baseDays.map((day) => day.weekday));
   const missingDays = defaultData.template.days.filter((day) => !existingWeekdays.has(day.weekday));
@@ -152,10 +154,16 @@ export function normalizeLocalData(data: Partial<AppData>, userId: string): AppD
     userId,
     bandColours: data.bandColours ?? defaultData.bandColours,
     sessions: (data.sessions ?? []).map(normalizeSession),
-    ...(data.activeWorkout ? { activeWorkout: normalizeActiveWorkout(data.activeWorkout) } : {}),
+    ...(data.activeWorkout
+      ? {
+          activeWorkout: {
+            ...normalizeActiveWorkout(data.activeWorkout),
+            ...(hideRestTimes ? { activeRest: undefined } : {}),
+          },
+        }
+      : {}),
     settings: {
-      ...defaultData.settings,
-      ...data.settings,
+      hideRestTimes,
     },
     template: {
       ...defaultData.template,
@@ -170,10 +178,12 @@ export function restoreAppData(
   userId: string,
   allowLegacyTargetDefaults = true,
   allowLegacySideFields = true,
+  allowLegacyTheme = true,
 ): JsonImportResult {
   const initialValidation = validateAppData(value, {
     allowMissingTargetReps: allowLegacyTargetDefaults,
     allowLegacySideFields,
+    allowLegacyTheme,
   });
   if (!initialValidation.ok) return { ok: false, error: initialValidation.error };
 
@@ -220,7 +230,7 @@ export function parseJsonImport(raw: string, userId: string): JsonImportResult {
   const migration = migrateJsonData(parsed.data, sourceVersion);
   if (!migration.ok) return migration;
 
-  const restored = restoreAppData(migration.data, userId, sourceVersion === 1, sourceVersion < 3);
+  const restored = restoreAppData(migration.data, userId, sourceVersion === 1, sourceVersion < 3, sourceVersion < 4);
   return restored.ok ? restored : { ok: false, error: `Import data is invalid: ${restored.error}` };
 }
 

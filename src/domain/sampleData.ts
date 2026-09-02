@@ -111,7 +111,7 @@ export function createDefaultAppData(userId = 'demo-user'): AppData {
     bandColours: defaultBandColours,
     sessions: [],
     settings: {
-      theme: 'light',
+      hideRestTimes: false,
     },
   };
 }

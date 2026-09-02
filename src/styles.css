@@ -39,40 +39,6 @@
   --shadow: 0 18px 50px rgb(29 37 34 / 10%);
 }
 
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --surface: #18211f;
-  --surface-muted: #25312e;
-  --surface-soft: #121a18;
-  --page-bg: #101715;
-  --input-bg: #111916;
-  --ink: #edf5f1;
-  --muted: #a6b6b0;
-  --primary: #68d0c4;
-  --primary-strong: #9fe4dc;
-  --on-primary: #06211f;
-  --accent: #f1bf57;
-  --on-accent: #211605;
-  --danger: #ff9184;
-  --danger-line: #74423d;
-  --warning: #f0c36d;
-  --line: #33413d;
-  --topbar-bg: rgb(16 23 21 / 92%);
-  --nav-bg: rgb(24 33 31 / 94%);
-  --hero-bg: #0d302d;
-  --hero-ink: #f6fffc;
-  --hero-muted: #b7d7d1;
-  --hero-action-border: rgb(255 255 255 / 38%);
-  --hero-action-bg: rgb(255 255 255 / 10%);
-  --success-bg: #153630;
-  --success-line: #2d6f64;
-  --complete-bg: #173828;
-  --complete-line: #2f6e4b;
-  --warning-bg: #322716;
-  --warning-line: #6d5624;
-  --shadow: 0 18px 50px rgb(0 0 0 / 28%);
-}
-
 * {
   box-sizing: border-box;
 }
@@ -1081,6 +1047,29 @@ small {
   border-radius: 8px;
 }
 
+.band-row.dragging {
+  border-color: var(--primary);
+  opacity: 0.55;
+}
+
+.band-drag-handle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.band-drag-handle:active {
+  cursor: grabbing;
+}
+
 .band-dot {
   width: 1.4rem;
   height: 1.4rem;
@@ -1098,22 +1087,63 @@ small {
   margin-top: 1rem;
 }
 
-.appearance-setting {
-  display: grid;
-  gap: 0.75rem;
+.band-order-help {
+  margin-bottom: 0.75rem;
+  font-size: 0.88rem;
 }
 
-.appearance-control {
-  overflow: visible;
-  padding-bottom: 0;
-}
-
-.appearance-control button {
-  display: inline-flex;
+.toggle-setting {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  min-width: 7.5rem;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.toggle-setting > span {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.toggle-setting small {
+  max-width: 38rem;
+}
+
+.toggle-setting input {
+  position: relative;
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 1.7rem;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.toggle-setting input::after {
+  content: '';
+  position: absolute;
+  top: 0.18rem;
+  left: 0.2rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(29 37 34 / 18%);
+  transition: transform 150ms ease;
+}
+
+.toggle-setting input:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.toggle-setting input:checked::after {
+  transform: translateX(1.3rem);
 }
 
 .export-actions {

@@ -80,7 +80,7 @@ describe('local data import, normalization, and legacy fallback', () => {
     const exercise = data.template.days[0].exercises[0] as unknown as Record<string, unknown>;
     exercise.tracksSides = true;
 
-    const result = parseJsonImport(JSON.stringify({ version: 3, data }), userId);
+    const result = parseJsonImport(JSON.stringify({ version: 4, data }), userId);
 
     expect(result).toMatchObject({ ok: false });
     if (!result.ok) expect(result.error).toContain('tracksSides is no longer supported');
@@ -99,10 +99,21 @@ describe('local data import, normalization, and legacy fallback', () => {
 
   it('rejects invalid JSON and unsupported export versions with clear errors', () => {
     expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
-    expect(parseJsonImport(JSON.stringify({ version: 4, data: createDefaultAppData(userId) }), userId)).toEqual({
+    expect(parseJsonImport(JSON.stringify({ version: 5, data: createDefaultAppData(userId) }), userId)).toEqual({
       ok: false,
-      error: 'Import file uses unsupported version 4. Supported versions are 1-3.',
+      error: 'Import file uses unsupported version 5. Supported versions are 1-4.',
     });
+  });
+
+  it('replaces the legacy theme setting with the rest-time preference', () => {
+    const data = createDefaultAppData(userId) as unknown as Record<string, unknown>;
+    data.settings = { theme: 'dark' };
+
+    const result = parseJsonImport(JSON.stringify({ version: 3, data }), userId);
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.data.settings).toEqual({ hideRestTimes: false });
   });
 
   it.each([

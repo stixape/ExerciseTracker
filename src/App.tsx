@@ -8,20 +8,20 @@ import {
   ChevronRight,
   Download,
   Dumbbell,
+  GripVertical,
   Home,
-  Moon,
   Palette,
   Play,
   Plus,
   RotateCcw,
   Settings,
-  Sun,
   Trash2,
   Upload,
 } from 'lucide-react';
 import { LOCAL_USER_ID, TrackerProvider, useTracker } from './app/TrackerContext';
 import { EmptyState, PageTitle } from './components/PageTitle';
 import { calculateSetVolume, detectPlateaus, getPerformedRepCount } from './domain/analytics';
+import { removeBandColour, reorderBandColours } from './domain/bands';
 import { getTemplateDayForToday } from './domain/calendar';
 import { createJsonExport, createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
@@ -989,7 +989,7 @@ function SettingsPage() {
   const [bandHex, setBandHex] = useState('#6f42c1');
   const [bandMessage, setBandMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [dataMessage, setDataMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
-  const isDarkMode = data.settings.theme === 'dark';
+  const [draggingBandId, setDraggingBandId] = useState<string>();
 
   function addBand() {
     const trimmedName = bandName.trim();
@@ -1012,27 +1012,35 @@ function SettingsPage() {
   }
 
   function removeBand(band: BandColour) {
-    const referencedInTemplate = data.template.days.some((day) =>
-      day.exercises.some((exercise) => exercise.sets.some((set) => set.target.bandColourIds?.includes(band.id))),
-    );
-    const referencedInSessions = [...data.sessions, ...(data.activeWorkout ? [data.activeWorkout.session] : [])].some((session) =>
-      session.sets.some(
-        (set) =>
-          set.target.bandColourIds?.includes(band.id) ||
-          set.actual.bandColourIds?.includes(band.id) ||
-          set.proposedNextTarget?.bandColourIds?.includes(band.id),
-      ),
-    );
-    if (referencedInTemplate || referencedInSessions) {
-      setBandMessage({ tone: 'error', text: `${band.name} is used by a plan or workout and cannot be removed.` });
-      return;
-    }
-    if (!window.confirm(`Remove the ${band.name} band colour?`)) return;
+    if (!window.confirm(`Remove the ${band.name} band colour? It will also be cleared from any plans and workouts that use it.`)) return;
+    saveData((current) => removeBandColour(current, band.id));
+    setBandMessage({ tone: 'success', text: `${band.name} removed from band colours, plans, and workouts.` });
+  }
+
+  function moveBand(bandId: string, targetBandId: string) {
+    if (bandId === targetBandId) return;
     saveData((current) => ({
       ...current,
-      bandColours: current.bandColours.filter((item) => item.id !== band.id),
+      bandColours: reorderBandColours(current.bandColours, bandId, targetBandId),
     }));
-    setBandMessage({ tone: 'success', text: `${band.name} removed.` });
+    setBandMessage({ tone: 'success', text: 'Band colour order saved.' });
+  }
+
+  function moveBandByOffset(bandId: string, offset: -1 | 1) {
+    const index = data.bandColours.findIndex((band) => band.id === bandId);
+    const target = data.bandColours[index + offset];
+    if (!target) return;
+    moveBand(bandId, target.id);
+  }
+
+  function setHideRestTimes(hideRestTimes: boolean) {
+    saveData((current) => ({
+      ...current,
+      settings: { hideRestTimes },
+      ...(hideRestTimes && current.activeWorkout?.activeRest
+        ? { activeWorkout: { ...current.activeWorkout, activeRest: undefined } }
+        : {}),
+    }));
   }
 
   async function importJsonFile(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1068,48 +1076,80 @@ function SettingsPage() {
 
   return (
     <div className="page-stack">
-      <PageTitle eyebrow="Settings" title="Bands and data" text="Manage resistance band colours and export your workout records." />
+      <PageTitle eyebrow="Settings" title="Workout, bands and data" text="Adjust your workout flow, manage resistance bands, and export your records." />
 
       <section className="section-block">
         <div className="section-heading">
-          <h2>Display</h2>
+          <h2>Workout</h2>
         </div>
-        <div className="appearance-setting">
-          <p className="muted-text">Light is the default. Choose dark when you prefer lower brightness.</p>
-          <div className="segmented-control appearance-control" role="group" aria-label="Colour mode">
-            <button
-              className={isDarkMode ? '' : 'active'}
-              type="button"
-              aria-pressed={!isDarkMode}
-              onClick={() =>
-                saveData((current) => ({ ...current, settings: { ...current.settings, theme: 'light' } }))
-              }
-            >
-              <Sun size={18} aria-hidden="true" />
-              Light
-            </button>
-            <button
-              className={isDarkMode ? 'active' : ''}
-              type="button"
-              aria-pressed={isDarkMode}
-              onClick={() =>
-                saveData((current) => ({ ...current, settings: { ...current.settings, theme: 'dark' } }))
-              }
-            >
-              <Moon size={18} aria-hidden="true" />
-              Dark
-            </button>
-          </div>
-        </div>
+        <label className="toggle-setting">
+          <span>
+            <strong>Hide rest times</strong>
+            <small>Go straight to the next set after completing one, without showing the rest countdown.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={data.settings.hideRestTimes}
+            onChange={(event) => setHideRestTimes(event.target.checked)}
+          />
+        </label>
       </section>
 
       <section className="section-block">
         <div className="section-heading">
           <h2>Band colours</h2>
         </div>
+        <p className="muted-text band-order-help">Drag the handle to set the order used in plans and workouts.</p>
         <div className="band-list">
           {data.bandColours.map((band) => (
-            <div className="band-row" key={band.id}>
+            <div
+              className={draggingBandId === band.id ? 'band-row dragging' : 'band-row'}
+              key={band.id}
+              data-band-id={band.id}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const bandId = event.dataTransfer.getData('text/plain') || draggingBandId;
+                if (bandId) moveBand(bandId, band.id);
+                setDraggingBandId(undefined);
+              }}
+            >
+              <button
+                className="band-drag-handle"
+                type="button"
+                draggable
+                aria-label={`Reorder ${band.name}; drag or use the arrow keys`}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', band.id);
+                  setDraggingBandId(band.id);
+                }}
+                onDragEnd={() => setDraggingBandId(undefined)}
+                onPointerDown={(event) => {
+                  if (event.pointerType === 'mouse') return;
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setDraggingBandId(band.id);
+                }}
+                onPointerMove={(event) => {
+                  if (event.pointerType === 'mouse' || draggingBandId !== band.id) return;
+                  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('.band-row');
+                  const targetBandId = target?.dataset.bandId;
+                  if (targetBandId) moveBand(band.id, targetBandId);
+                }}
+                onPointerUp={(event) => {
+                  if (event.pointerType === 'mouse') return;
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                  setDraggingBandId(undefined);
+                }}
+                onPointerCancel={() => setDraggingBandId(undefined)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                  event.preventDefault();
+                  moveBandByOffset(band.id, event.key === 'ArrowUp' ? -1 : 1);
+                }}
+              >
+                <GripVertical size={18} aria-hidden="true" />
+              </button>
               <span className="band-dot" style={{ '--band-color': band.hex } as React.CSSProperties} />
               <strong>{band.name}</strong>
               <button

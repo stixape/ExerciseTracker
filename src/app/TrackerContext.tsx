@@ -52,10 +52,6 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    if (data) document.documentElement.dataset.theme = data.settings.theme;
-  }, [data]);
-
   const saveData = useCallback(
     (updater: (current: AppData) => AppData) => {
       const current = dataRef.current;

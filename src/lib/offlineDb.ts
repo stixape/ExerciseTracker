@@ -52,6 +52,13 @@ class ExerciseTrackerDb extends Dexie {
         appData: '&userId, updatedAt',
       })
       .upgrade((transaction) => migrateVersionThree(transaction));
+
+    // Replace the retired light/dark preference with the workout rest setting.
+    this.version(5)
+      .stores({
+        appData: '&userId, updatedAt',
+      })
+      .upgrade((transaction) => migrateVersionFour(transaction));
   }
 }
 
@@ -84,6 +91,17 @@ async function migrateVersionThree(transaction: Transaction): Promise<void> {
   for (const record of records) {
     const restored = restoreAppData(record.data, record.userId, false);
     if (!restored.ok) throw new Error(`Stored ExerciseTracker data could not be upgraded: ${restored.error}`);
+    await appDataTable.put({ ...record, data: restored.data });
+  }
+}
+
+async function migrateVersionFour(transaction: Transaction): Promise<void> {
+  const appDataTable = transaction.table<AppDataRecord>('appData');
+  const records = await appDataTable.toArray();
+
+  for (const record of records) {
+    const restored = restoreAppData(record.data, record.userId, false, false, true);
+    if (!restored.ok) throw new Error(`Stored ExerciseTracker settings could not be upgraded: ${restored.error}`);
     await appDataTable.put({ ...record, data: restored.data });
   }
 }

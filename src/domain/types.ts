@@ -1,5 +1,4 @@
 export type MetricMode = 'weighted_reps' | 'timed_hold' | 'band_reps';
-export type ThemeMode = 'light' | 'dark';
 
 export interface BandColour {
   id: string;
@@ -107,7 +106,7 @@ export interface AppData {
   sessions: WorkoutSession[];
   activeWorkout?: ActiveWorkout;
   settings: {
-    theme: ThemeMode;
+    hideRestTimes: boolean;
   };
 }
 

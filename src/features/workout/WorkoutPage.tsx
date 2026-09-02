@@ -96,7 +96,7 @@ export function WorkoutPage() {
   }
 
   function completeWorkoutSet(set: SessionSet) {
-    primeAlarmAudio();
+    if (!data.settings.hideRestTimes) primeAlarmAudio();
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
       window.alert(errors.join('\n'));
@@ -106,7 +106,7 @@ export function WorkoutPage() {
     saveData((current) => {
       if (!current.activeWorkout) return current;
       const completed = completeSet(current.activeWorkout.session, set.id, set.actual);
-      const createdRest = createActiveRest(completed, set.id);
+      const createdRest = current.settings.hideRestTimes ? undefined : createActiveRest(completed, set.id);
       const activeRest = createdRest ? { ...createdRest, nextSetId: getCurrentSessionSet(completed)?.id } : undefined;
       const completedSession = completeSessionIfDone(completed);
 
@@ -299,7 +299,7 @@ export function WorkoutPage() {
     );
   }
 
-  if (activeWorkout?.activeRest) {
+  if (activeWorkout?.activeRest && !data.settings.hideRestTimes) {
     return (
       <RestScreen
         rest={activeWorkout.activeRest}
