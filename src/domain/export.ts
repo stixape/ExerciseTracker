@@ -1,5 +1,8 @@
 import type { AppData, WorkoutSession } from './types';
 import { APP_DATA_EXPORT_VERSION } from './dataVersion';
+import { createId } from './ids';
+import { validateAppData } from '../lib/appDataSchema';
+import { backupChecksum, type BackupIdentity } from '../lib/backupFormat';
 
 function csvEscape(value: string | number | undefined): string {
   const rawText = value === undefined ? '' : String(value);
@@ -18,11 +21,16 @@ export function formatLocalCalendarDate(value: string): string {
   return `${year}-${month}-${day}`;
 }
 
-export function createJsonExport(data: AppData): string {
+export function createJsonExport(data: AppData, identity?: BackupIdentity): string {
+  const validation = validateAppData(data);
+  if (!validation.ok) throw new TypeError('Only valid workout data can be backed up. Correct the unfinished edit first.');
+  const backup = identity ?? { snapshotId: createId('backup'), revision: 0, savedAt: new Date().toISOString() };
   return JSON.stringify(
     {
-      exportedAt: new Date().toISOString(),
+      exportedAt: backup.savedAt,
       version: APP_DATA_EXPORT_VERSION,
+      backup,
+      checksum: backupChecksum(data, backup),
       data,
     },
     null,
@@ -84,5 +92,5 @@ export function downloadTextFile(filename: string, content: string, type: string
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

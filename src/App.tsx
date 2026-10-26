@@ -16,14 +16,13 @@ import {
   RotateCcw,
   Settings,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import { LOCAL_USER_ID, TrackerProvider, useTracker } from './app/TrackerContext';
 import { EmptyState, PageTitle } from './components/PageTitle';
 import { calculateSetVolume, detectPlateaus, getPerformedRepCount } from './domain/analytics';
-import { removeBandColour, reorderBandColours } from './domain/bands';
+import { archiveBandColour, reorderBandColours } from './domain/bands';
 import { getTemplateDayForToday } from './domain/calendar';
-import { createJsonExport, createCsvExport, downloadTextFile } from './domain/export';
+import { createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
 import { createSessionFromDay } from './domain/session';
@@ -37,11 +36,10 @@ import type {
   WorkoutSession,
 } from './domain/types';
 import { primeAlarmAudio } from './lib/alarm';
-import { parseJsonImport } from './lib/localData';
+import { BackupPanel } from './components/BackupPanel';
+import { ValidatedInput } from './components/ValidatedInput';
 import { formatActualReps, formatBandNames, formatSetActual } from './lib/workoutFormatting';
 import { WorkoutPage } from './features/workout/WorkoutPage';
-
-const MAX_JSON_IMPORT_BYTES = 25 * 1024 * 1024;
 
 function App() {
   return (
@@ -321,7 +319,7 @@ function PlanPage() {
       <section className="section-block">
         <label className="inline-label">
           Day name
-          <input value={selectedDay.label} onChange={(event) => updateDay(selectedDay.id, (day) => ({ ...day, label: event.target.value }))} />
+          <ValidatedInput value={selectedDay.label} onValue={(label) => updateDay(selectedDay.id, (day) => ({ ...day, label }))} />
         </label>
       </section>
 
@@ -381,7 +379,7 @@ function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandCo
 
   return {
     reps,
-    bandColourIds: existing.bandColourIds?.length ? existing.bandColourIds : [bandColours[0]?.id].filter(Boolean),
+    bandColourIds: existing.bandColourIds?.length ? existing.bandColourIds : [bandColours.find((band) => !band.archived)?.id].filter((id): id is string => Boolean(id)),
   };
 }
 
@@ -426,10 +424,10 @@ function PlanExerciseEditor({
         <div className="card-heading">
           <label className="exercise-name-field">
             Exercise name
-            <input
+            <ValidatedInput
               aria-label={`Exercise ${exerciseIndex + 1} name`}
               value={exercise.name}
-              onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))}
+              onValue={(name) => onChange((current) => ({ ...current, name }))}
             />
           </label>
           <button type="button" className="icon-button danger" onClick={onRemove} aria-label={`Remove ${exercise.name}`}>
@@ -535,12 +533,6 @@ function getNumericInputStyle(value: number | undefined): React.CSSProperties {
   return { '--digits': Math.max(1, String(value ?? '').length) } as React.CSSProperties;
 }
 
-function parseOptionalNumber(value: string): number | undefined {
-  if (value === '') return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function SetValueEditor({
   mode,
   values,
@@ -562,14 +554,14 @@ function SetValueEditor({
     return (
       <label className="compact-field">
         Seconds
-        <input
+        <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.seconds)}
           disabled={disabled}
           type="number"
           min={0}
           value={values.seconds ?? ''}
-          onChange={(event) => patch({ seconds: parseOptionalNumber(event.target.value) })}
+          whole onValue={(value) => patch({ seconds: Number(value) })}
         />
       </label>
     );
@@ -580,18 +572,18 @@ function SetValueEditor({
       <div className="value-editor">
         <label className="compact-field">
           Reps
-          <input
+          <ValidatedInput
             className="numeric-input"
             style={getNumericInputStyle(values.reps)}
             disabled={disabled}
             type="number"
             min={0}
             value={values.reps ?? ''}
-            onChange={(event) => patch({ reps: parseOptionalNumber(event.target.value) })}
+            whole onValue={(value) => patch({ reps: Number(value) })}
           />
         </label>
         <div className="band-picker" aria-label="Band colours">
-          {bandColours.map((band) => {
+          {bandColours.filter((band) => !band.archived || values.bandColourIds?.includes(band.id)).map((band) => {
             const active = values.bandColourIds?.includes(band.id) ?? false;
             return (
               <button
@@ -621,7 +613,7 @@ function SetValueEditor({
     <div className="value-editor two">
       <label className="compact-field">
         Kg
-        <input
+        <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.weightKg)}
           disabled={disabled}
@@ -629,19 +621,19 @@ function SetValueEditor({
           min={0}
           step={0.5}
           value={values.weightKg ?? ''}
-          onChange={(event) => patch({ weightKg: parseOptionalNumber(event.target.value) })}
+          onValue={(value) => patch({ weightKg: Number(value) })}
         />
       </label>
       <label className="compact-field">
         Reps
-        <input
+        <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.reps)}
           disabled={disabled}
           type="number"
           min={0}
           value={values.reps ?? ''}
-          onChange={(event) => patch({ reps: parseOptionalNumber(event.target.value) })}
+          whole onValue={(value) => patch({ reps: Number(value) })}
         />
       </label>
     </div>
@@ -817,6 +809,13 @@ function ProgressPage() {
                   <span>
                     {formatDate(session.startedAt)} - {session.sets.filter((set) => set.completedAt).length} sets
                   </span>
+                  <details className="recorded-session">
+                    <summary>View recorded sets</summary>
+                    {session.snapshot.exercises.map((exercise) => <div key={exercise.id}>
+                      <strong>{exercise.name}</strong>
+                      {session.sets.filter((set) => set.exerciseId === exercise.id).map((set) => <p key={set.id}>Set {set.setNumber}: {formatSetActual(set, data.bandColours)}</p>)}
+                    </div>)}
+                  </details>
                 </div>
                 <button className="icon-button danger" type="button" aria-label={`Delete ${session.label} session from ${formatDate(session.startedAt)}`} onClick={() => deleteSession(session.id)}>
                   <Trash2 size={17} />
@@ -944,7 +943,7 @@ function WeightTrendChart({ data }: { data: Array<{ date: string; weightKg: numb
 }
 
 function setMatchesExercise(set: SessionSet, exercise: TemplateExercise): boolean {
-  return set.exerciseId ? set.exerciseId === exercise.id : set.exerciseName === exercise.name;
+  return set.mode === exercise.mode && (set.exerciseId ? set.exerciseId === exercise.id : set.exerciseName === exercise.name);
 }
 
 function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours: BandColour[]): string[] {
@@ -991,7 +990,7 @@ function SettingsPage() {
   const [dataMessage, setDataMessage] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [draggingBandId, setDraggingBandId] = useState<string>();
 
-  function addBand() {
+  async function addBand() {
     const trimmedName = bandName.trim();
     if (!trimmedName) {
       setBandMessage({ tone: 'error', text: 'Enter a band name.' });
@@ -999,36 +998,41 @@ function SettingsPage() {
     }
 
     if (data.bandColours.some((band) => band.name.toLowerCase() === trimmedName.toLowerCase())) {
-      setBandMessage({ tone: 'error', text: 'A band with that name already exists.' });
+      setBandMessage({ tone: 'error', text: 'A band with that name already exists. If archived, restore it below.' });
       return;
     }
 
-    saveData((current) => ({
+    if (trimmedName.length > 500 || data.bandColours.length >= 100) {
+      setBandMessage({ tone: 'error', text: 'Use a name up to 500 characters. The palette supports 100 bands including archives.' });
+      return;
+    }
+    const saved = await saveData((current) => ({
       ...current,
       bandColours: [...current.bandColours, { id: createId('band'), name: trimmedName, hex: bandHex }],
     }));
-    setBandName('');
-    setBandMessage({ tone: 'success', text: `${trimmedName} added.` });
+    if (saved) setBandName('');
+    setBandMessage({ tone: saved ? 'success' : 'error', text: saved ? `${trimmedName} added.` : 'The new band could not be saved. Its name was kept.' });
   }
 
   function removeBand(band: BandColour) {
-    if (!window.confirm(`Remove the ${band.name} band colour? It will also be cleared from any plans and workouts that use it.`)) return;
-    saveData((current) => removeBandColour(current, band.id));
-    setBandMessage({ tone: 'success', text: `${band.name} removed from band colours, plans, and workouts.` });
+    if (!window.confirm(`Archive the ${band.name} band colour? It will be hidden from new selections. Existing plans and workout history will keep their recorded band values.`)) return;
+    void saveData((current) => archiveBandColour(current, band.id)).then((saved) => {
+      setBandMessage({ tone: saved ? 'success' : 'error', text: saved ? `${band.name} archived. Existing records were preserved.` : 'Band change could not be saved.' });
+    });
   }
 
   function moveBand(bandId: string, targetBandId: string) {
     if (bandId === targetBandId) return;
-    saveData((current) => ({
+    void saveData((current) => ({
       ...current,
       bandColours: reorderBandColours(current.bandColours, bandId, targetBandId),
-    }));
-    setBandMessage({ tone: 'success', text: 'Band colour order saved.' });
+    })).then((saved) => setBandMessage({ tone: saved ? 'success' : 'error', text: saved ? 'Band colour order saved.' : 'Band order could not be saved.' }));
   }
 
   function moveBandByOffset(bandId: string, offset: -1 | 1) {
-    const index = data.bandColours.findIndex((band) => band.id === bandId);
-    const target = data.bandColours[index + offset];
+    const activeBands = data.bandColours.filter((band) => !band.archived);
+    const index = activeBands.findIndex((band) => band.id === bandId);
+    const target = activeBands[index + offset];
     if (!target) return;
     moveBand(bandId, target.id);
   }
@@ -1043,34 +1047,11 @@ function SettingsPage() {
     }));
   }
 
-  async function importJsonFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
-    if (!file) return;
-    if (file.size > MAX_JSON_IMPORT_BYTES) {
-      setDataMessage({ tone: 'error', text: 'JSON import is larger than the 25 MB safety limit.' });
-      return;
-    }
-
-    const result = parseJsonImport(await file.text(), LOCAL_USER_ID);
-    if (!result.ok) {
-      setDataMessage({ tone: 'error', text: result.error });
-      return;
-    }
-
-    const restored = await replaceData(result.data);
-    setDataMessage(
-      restored
-        ? { tone: 'success', text: 'JSON import restored.' }
-        : { tone: 'error', text: 'JSON import was valid, but could not be saved on this device.' },
-    );
-  }
-
   async function resetData() {
-    const confirmed = window.confirm('Reset all local ExerciseTracker data on this device? This removes workouts, plan edits, active workout progress, and band colours.');
+    const confirmed = window.confirm('Replace the current plan, workouts and settings with a starter plan? Recovery checkpoints and independent backups will be kept. Remote uploads will pause.');
     if (!confirmed) return;
 
-    const reset = await replaceData(createDefaultAppData(LOCAL_USER_ID));
+    const reset = await replaceData(createDefaultAppData(LOCAL_USER_ID), 'reset');
     setDataMessage(reset ? { tone: 'success', text: 'Local data reset.' } : { tone: 'error', text: 'Local data could not be reset.' });
   }
 
@@ -1101,7 +1082,7 @@ function SettingsPage() {
         </div>
         <p className="muted-text band-order-help">Drag the handle to set the order used in plans and workouts.</p>
         <div className="band-list">
-          {data.bandColours.map((band) => (
+          {data.bandColours.filter((band) => !band.archived).map((band) => (
             <div
               className={draggingBandId === band.id ? 'band-row dragging' : 'band-row'}
               key={band.id}
@@ -1155,14 +1136,18 @@ function SettingsPage() {
               <button
                 className="icon-button danger"
                 type="button"
-                aria-label={`Remove ${band.name}`}
+                aria-label={`Archive ${band.name}`}
                 onClick={() => removeBand(band)}
               >
-                <Trash2 size={17} />
+            <Trash2 size={17} />
               </button>
             </div>
           ))}
         </div>
+        {data.bandColours.some((band) => band.archived) && <details>
+          <summary>Archived band colours</summary>
+          {data.bandColours.filter((band) => band.archived).map((band) => <button type="button" key={band.id} className="ghost-button" onClick={() => void saveData((current) => ({ ...current, bandColours: current.bandColours.map((item) => item.id === band.id ? { ...item, archived: false } : item) }))}>Restore {band.name} band</button>)}
+        </details>}
         <div className="add-band-form">
           <label>
             Name
@@ -1200,25 +1185,17 @@ function SettingsPage() {
         </div>
         {dataMessage && <p className={dataMessage.tone === 'error' ? 'form-message' : 'success-message'}>{dataMessage.text}</p>}
         <div className="export-actions">
-          <button className="secondary-button" type="button" onClick={() => downloadTextFile('exercise-tracker-export.json', createJsonExport(data), 'application/json')}>
-            <Download size={18} />
-            JSON
-          </button>
           <button className="secondary-button" type="button" onClick={() => downloadTextFile('exercise-tracker-sessions.csv', createCsvExport(data.sessions), 'text/csv')}>
             <Download size={18} />
             CSV
           </button>
-          <label className="file-button">
-            <Upload size={18} />
-            Import JSON
-            <input type="file" accept="application/json,.json" aria-label="Import JSON export" onChange={importJsonFile} />
-          </label>
           <button className="ghost-button danger" type="button" onClick={resetData}>
             <RotateCcw size={18} />
             Reset
           </button>
         </div>
       </section>
+      <BackupPanel />
     </div>
   );
 }

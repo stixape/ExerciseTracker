@@ -16,15 +16,39 @@ Precache emitted assets and name caches from content. Keep unrelated origin cach
 
 ## ET-003: Cloud sync remains deferred
 
-Status: documented deferred direction; no implementation approval inferred.
+Status: historical deferred direction, superseded by ET-007 on 2026-10-26 for the optional integration. Hosted enablement remains unapproved/unconfigured.
 Evidence: docs/sync-strategy.md, README.md; documentation history includes b1ff153 (2026-04-29) and 8277ffe.
-Current recovery uses JSON export/import. The retained future direction is authenticated snapshot backup with explicit replacement and last-saved-snapshot behavior; Supabase is discussed as a later backend. No account UI/cloud writes are present. Revisit only for an authorized sync task; record-level/real-time sync is not the documented default.
+At onboarding, recovery used JSON export/import. The retained future direction was authenticated snapshot backup with explicit replacement and last-saved-snapshot behavior; Supabase was discussed as a later backend. ET-007 replaces single-copy overwrite semantics with retained immutable versions. Record-level/real-time sync remains deferred.
 
 ## ET-004: Rest and band settings replace older UI assumptions
 
 Status: observed implementation.
 Evidence: commit c58a8ab (2026-09-02), src/App.tsx, src/domain/bands.ts and IndexedDB migration version 5.
-Current settings expose hiding rest times and band ordering/removal; the migration retires the old light/dark preference. Consequence: older README/plan theme descriptions need reconciliation before reuse. The original rationale for this UI change is not established here.
+At the original observation, settings exposed hiding rest times and band ordering/removal; the migration retired the old light/dark preference. README/plan descriptions were reconciled during the 2026-10-26 reliability work, and ET-008 changes removal to history-preserving archive. The original rationale for the earlier UI change is not established here.
+
+## ET-005: Revision-checked local commits and preserved sources
+
+Status: accepted and implemented, 2026-10-26, following the user's reliability implementation request.
+Evidence: src/lib/offlineDb.ts, src/app/TrackerContext.tsx and their regression tests.
+Extend ET-001 with schema v6 revisions, transaction-scoped compare-and-replace, strict durability, source archives and rollback checkpoints. Empty and unreadable stores are distinct; neither silently saves a starter plan. Invalid historical business data can remain intact during a structural upgrade so a confirmed valid restore is possible. Pre-normalisation originals remain in recoverySources. Every restored snapshot receives a new local revision. Preserve pending valid edits on write failure and exclude unfinished editor drafts. Consequence: older writers cannot open the newer database schema; stale clients must rescue/reload rather than overwrite.
+
+## ET-006: Independent verified files and explicit restore
+
+Status: accepted and implemented, 2026-10-26.
+Evidence: src/lib/fileBackups.ts, src/lib/backupFormat.ts, src/components/BackupPanel.tsx and e2e/reliability.spec.ts.
+Use version-5 checksummed JSON with v1–v4 import compatibility. Retain 20 recent plus 30 daily checkpoints/files; pre-destructive copies are protected until explicit cleanup. Device checkpoints share the browser failure boundary. Real selected files are independent of browser storage; ordinary download initiation is not verification. Folder access is feature-detected and may require reconnection. Consequence: recovery reaches only the last verified independent copy; closed-app execution and platform persistence cannot be guaranteed.
+
+## ET-007: Optional immutable remote snapshot backup
+
+Status: accepted and implemented as a disabled-by-default integration, 2026-10-26. Production provisioning, origin selection/deployment, authentication delivery and live policy verification remain external release work.
+Evidence: src/lib/remoteBackups.ts, supabase/migrations/, supabase/tests/ and docs/sync-strategy.md.
+Supersede ET-003's last-saved-copy policy. Use Supabase authentication and owner-only immutable rows, idempotent inserts/read-back verification, explicit restore, and separate device/restore streams. Reset/import/restore pauses publishing and rotates the next stream so a newer empty dataset cannot prune older remote history. No automatic merge or remote-to-local replacement. Require a dedicated configured origin before authentication and keep secrets out of the frontend. Provider-visible storage is an explicit opt-in; end-to-end encryption/key recovery, native wrappers and real-time/record-level sync remain deferred. Independent files remain useful even when remote backup is enabled.
+
+## ET-008: Preserve historical bands
+
+Status: accepted and implemented, 2026-10-26.
+Evidence: src/domain/bands.ts, src/domain/types.ts and band/history regression tests.
+Archive bands instead of removing their references from completed snapshots. Existing selections remain readable; new choices omit archived bands. Session details use the recorded snapshot, independently of the current plan. Previously erased values cannot be reconstructed without an older backup; this change does not fabricate them.
 
 ## Recording future work
 

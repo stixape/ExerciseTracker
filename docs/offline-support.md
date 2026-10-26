@@ -22,7 +22,7 @@ The source `public/service-worker.js` is a template. Its placeholders are expect
 
 Offline availability begins after one successful online load has finished and the service worker has activated. A device that has never loaded the release cannot install it offline, and closing the browser before initial precaching finishes can interrupt installation.
 
-Application records remain in the browser's IndexedDB as one validated snapshot. A one-time migration reads records created by the earlier local-storage/IndexedDB design and removes the old stores only after the snapshot is safely written. The service-worker cache contains application files, not workout records. Updating or replacing an app cache must not clear user data.
+Application records remain in IndexedDB as one validated, revision-checked snapshot with recovery checkpoints. Migrations retain the original legacy strings and archive retired table rows before removal. Empty/unreadable stores never silently save defaults. The service-worker cache contains application files, not workout records. Updating an app cache must not clear user data. Checkpoints share the browser's failure boundary; see recovery.md for independent file restoration after complete storage loss.
 
 ## Automated Regression
 

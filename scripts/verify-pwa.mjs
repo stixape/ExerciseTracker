@@ -86,7 +86,18 @@ try {
   });
 
   await page.goto(appUrl, { waitUntil: 'load' });
-  await page.getByRole('heading', { level: 1 }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Create starter plan' }).click();
+  await page.getByRole('link', { name: /ExerciseTracker home/i }).waitFor({ state: 'visible' });
+  async function savedData() {
+    return page.evaluate(async () => {
+      const open = globalThis.indexedDB.open('ExerciseTracker');
+      const db = await new Promise((resolve, reject) => { open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
+      try {
+        return await new Promise((resolve, reject) => { const request = db.transaction('appData').objectStore('appData').get('local-user'); request.onsuccess = () => resolve(JSON.stringify(request.result.data)); request.onerror = () => reject(request.error); });
+      } finally { db.close(); }
+    });
+  }
+  const beforeOffline = await savedData();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     if (navigator.serviceWorker.controller) return;
@@ -152,7 +163,7 @@ try {
   await offlineNavigation;
   await page.waitForLoadState('domcontentloaded');
   try {
-    await page.getByRole('heading', { level: 1 }).waitFor({ state: 'visible', timeout: 10_000 });
+    await page.getByRole('link', { name: /ExerciseTracker home/i }).waitFor({ state: 'visible', timeout: 10_000 });
   } catch (error) {
     const pageText = await page.locator('body').innerText().catch(() => '<unavailable>');
     throw new Error(
@@ -160,6 +171,8 @@ try {
       { cause: error },
     );
   }
+
+  if (await savedData() !== beforeOffline) throw new Error('Offline reload changed the saved workout snapshot.');
 
   console.log(`PWA offline verification passed with ${cacheState.cachedUrls.length} cached URLs.`);
   await context.close();

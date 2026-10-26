@@ -108,7 +108,7 @@ export function createDefaultAppData(userId = 'demo-user'): AppData {
   return {
     userId,
     template: createDefaultTemplate(),
-    bandColours: defaultBandColours,
+    bandColours: defaultBandColours.map((band) => ({ ...band })),
     sessions: [],
     settings: {
       hideRestTimes: false,

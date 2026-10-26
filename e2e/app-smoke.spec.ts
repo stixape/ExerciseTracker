@@ -15,6 +15,8 @@ const bands = [
 
 async function openApp(page: Page) {
   await page.goto('/ExerciseTracker/');
+  await expect(page.getByRole('button', { name: 'Create starter plan' })).toBeVisible();
+  await page.getByRole('button', { name: 'Create starter plan' }).click();
   await expect(page.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
 }
 
@@ -60,6 +62,7 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
       }),
     ),
   });
+  await page.getByRole('button', { name: 'Restore this backup' }).click();
   await expect(page.getByText('JSON import restored.')).toBeVisible();
   await page.goto('/ExerciseTracker/workout/day_test');
 }
@@ -94,6 +97,7 @@ test('the single default appearance has a persistent hide-rest setting', async (
   const hideRestTimes = page.getByRole('checkbox', { name: /Hide rest times/ });
   await expect(hideRestTimes).not.toBeChecked();
   await hideRestTimes.check();
+  await expect(page.locator('.save-status')).toContainText('Saved on this device');
   await page.reload();
   await expect(page.getByRole('checkbox', { name: /Hide rest times/ })).toBeChecked();
 });
@@ -106,6 +110,7 @@ test('hide rest times goes straight to the next set', async ({ page }) => {
 
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('checkbox', { name: /Hide rest times/ }).check();
+  await expect(page.locator('.save-status')).toContainText('Saved on this device');
   await page.goto('/ExerciseTracker/workout/day_test');
   await page.getByRole('button', { name: 'Start workout' }).click();
   await page.getByRole('button', { name: 'Complete set' }).click();
@@ -114,7 +119,7 @@ test('hide rest times goes straight to the next set', async ({ page }) => {
   await expect(page.getByText('Rest period')).toHaveCount(0);
 });
 
-test('used band colours can be reordered and removed everywhere', async ({ page }) => {
+test('used band colours can be reordered and archived without rewriting records', async ({ page }) => {
   await importWorkout(page, 'Band settings test', [
     { id: 'exercise_band', name: 'Band Row', mode: 'band_reps', target: { reps: 10, bandColourIds: ['band_red'] } },
   ]);
@@ -123,13 +128,14 @@ test('used band colours can be reordered and removed everywhere', async ({ page 
   const blueHandle = page.getByRole('button', { name: /Reorder Blue/ });
   await blueHandle.dragTo(page.locator('.band-row[data-band-id="band_red"]'));
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
+  await expect(page.locator('.save-status')).toContainText('Saved on this device');
 
   await page.reload();
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
 
   acceptNextDialog(page);
-  await page.getByRole('button', { name: 'Remove Red' }).click();
-  await expect(page.getByText('Red removed from band colours, plans, and workouts.')).toBeVisible();
+  await page.getByRole('button', { name: 'Archive Red' }).click();
+  await expect(page.getByText('Red archived. Existing records were preserved.')).toBeVisible();
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Green']);
 
   await page.getByRole('link', { name: 'Plan' }).click();
@@ -137,6 +143,7 @@ test('used band colours can be reordered and removed everywhere', async ({ page 
   await bandCard.locator('summary').click();
   expect(await bandCard.locator('.band-picker button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
     'Blue band',
+    'Red band',
     'Green band',
   ]);
 
@@ -148,7 +155,7 @@ test('used band colours can be reordered and removed everywhere', async ({ page 
       .first()
       .locator('.band-picker button')
       .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))),
-  ).toEqual(['Blue for Performed bands', 'Green for Performed bands']);
+  ).toEqual(['Blue for Performed bands', 'Red for Performed bands', 'Green for Performed bands']);
 });
 
 test('workout preview does not start a session and active entries survive reload', async ({ page }) => {
@@ -168,6 +175,7 @@ test('workout preview does not start a session and active entries survive reload
   await page.getByRole('spinbutton', { name: 'Performed weight' }).fill('62.5');
   await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('8');
   await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('8');
+  await expect(page.locator('.save-status')).toContainText('Saved on this device');
 
   await page.reload();
   await expect(page.getByRole('spinbutton', { name: 'Performed weight' })).toHaveValue('62.5');

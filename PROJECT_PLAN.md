@@ -4,7 +4,7 @@
 
 ExerciseTracker is a mobile-first installable PWA for Android, also usable on desktop from the same web app. Version one is a free personal workout tracker for a single user.
 
-The application supports Monday-Saturday workout templates, workout logging, guided rest timers, manual exercise-order selection during workouts, offline use, light/dark display modes, per-exercise progress history, weight charts, personal bests, plateau visibility, and JSON/CSV export.
+The application supports Monday-Saturday workout templates, workout logging, optional guided rest timers, manual exercise-order selection, offline use, per-exercise progress, weight charts, personal bests, plateau visibility, and JSON/CSV export. Reliability changes, confirmed recovery and optional remote backup are specified by ARCHITECTURE.md, DECISIONS.md and docs/recovery.md; those current documents supersede older display/sync assumptions below.
 
 ## Technical Direction
 
@@ -12,9 +12,9 @@ The application supports Monday-Saturday workout templates, workout logging, gui
 - Vite build and development tooling.
 - React Router app routing.
 - One validated IndexedDB snapshot through Dexie for the editable plan, active workout, completed history, settings, and band colours.
-- A one-time migration from the earlier local-storage/IndexedDB split; no dormant sync queue or cloud writes.
+- Preserved sources from the earlier local-storage/IndexedDB split; retired queue rows are recovery archives, not an active sync queue. Optional configured cloud backup follows docs/sync-strategy.md.
 - PWA manifest with dedicated standard, maskable, and Apple icons, plus a build-generated full precache for Android installation, desktop access, and repeat offline loads.
-- No account authorisation or sign-in flow in v1.
+- Account-free by default; optional configured remote backup uses explicit opt-in. See docs/sync-strategy.md.
 
 ## Core Product Model
 

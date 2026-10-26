@@ -1,31 +1,34 @@
 # ExerciseTracker
 
-ExerciseTracker is a mobile-first, local-first PWA for planning workouts, logging sets, using guided rest timers, and reviewing per-exercise progress.
+ExerciseTracker is a mobile-first, offline-first PWA for planning workouts, logging sets, guided rest and progress history.
 
-Live app: [stixape.github.io/ExerciseTracker](https://stixape.github.io/ExerciseTracker/)
+Existing public deployment: [stixape.github.io/ExerciseTracker](https://stixape.github.io/ExerciseTracker/). Local changes do not establish that this deployment has been updated.
 
-## Current Features
+## Features
 
-- Monday-Saturday workout plan.
-- Weight, time, and resistance-band exercise modes.
-- Editable sets, weights, reps, seconds, and band colours.
-- Active workout flow with rest timers and alarm feedback.
-- Manual exercise selection during workouts with automatic return to the earliest incomplete exercise.
-- Per-day progress views with PBs, plateau status, weight history charts, and session deletion.
-- Light and dark display modes.
-- JSON and CSV export, JSON import, and local reset.
+- Monday–Saturday workout plans; weighted, timed and band exercises.
+- Editable targets, active workout selection, reviewed next targets and optional rest countdowns.
+- Per-exercise progress, personal bests, charts and recorded session details.
+- Band reordering and history-preserving archive.
+- Revision-checked IndexedDB, preserved migration sources and device recovery checkpoints.
+- Confirmed JSON restore/reset, CSV export, verified folder backup where supported and download verification.
+- Optional versioned Supabase backup on a configured dedicated origin, disabled by default.
 
-## Privacy And Data
+## Privacy and recovery
 
-ExerciseTracker is local-first. Workout plans, active workouts, completed sessions, settings, and band colours are stored together in one IndexedDB snapshot unless you export them. Existing installations are migrated from the earlier local-storage/IndexedDB split on first load.
+Browser storage is not permanently durable. Installation and persistent-storage permission do not provide recovery after clearing data or losing a device. Device checkpoints share that failure boundary.
 
-The current release does not include accounts, backend sync, cloud backup, or account recovery. Clearing browser data, uninstalling the PWA, or using a different device can remove local records unless you have exported a JSON backup first.
+Use Settings → Backup and recovery to download a JSON file and select the saved file again to verify it, or connect a supported backup folder. Automatic folder backups run while the app is open; access may need reconnecting. Only independently verified copies establish a recovery point. CSV cannot restore the whole application.
 
-Browser storage is isolated by origin, not by URL path. The hosted app shares the `stixape.github.io` origin with any other project served from that account. A dedicated origin is preferable if the app will hold sensitive records. The content security policy limits the app to same-origin resources, but it does not encrypt local data or protect an unlocked browser profile.
+An empty/unreadable store opens recovery controls instead of silently writing defaults. Imports preview the plan/session counts and require confirmation. Restore receives a new local revision; reset preserves checkpoints, original sources and independent files.
+
+See [recovery instructions](docs/recovery.md) and the [investigation with evidence limits](docs/reliability-audit.md). No failed-device database was available, so the historical incident's exact cause remains unproven.
+
+The existing hosted app shares the stixape.github.io origin with other projects. URL paths are not a storage-security boundary. Remote authentication is prohibited on that shared origin. Optional backup requires a dedicated origin, a private configured service and explicit opt-in. Files are readable workout records; provider-backed remote storage is not end-to-end encrypted. See [remote setup](docs/sync-strategy.md).
 
 ## Development
 
-Use Node.js 24.19.x and npm 11.17.x. The exact package-manager release is recorded in `package.json`; `package-lock.json` is the only dependency lockfile.
+Use Node.js 24.19.x and npm 11.17.x. package.json records the exact package manager; package-lock.json is the only lockfile.
 
 ```bash
 npm ci
@@ -37,36 +40,17 @@ npm run dev
 
 ```bash
 npm run verify
+npm run benchmark:storage
 ```
 
-`verify` lints and runs unit tests, creates the Pages artifact once, then runs both browser suites against that exact `dist` directory. The PWA regression disables the browser's HTTP cache and reloads offline after the first online visit. It also confirms that every emitted build file was precached and that service-worker activation leaves unrelated origin caches alone.
+The release gate lints, runs unit tests, builds the Pages artifact once, then tests that same dist with desktop/mobile Chromium and the offline regression. Recovery tests clear IndexedDB, localStorage, caches and service workers in disposable profiles, reacquire the shell and restore a downloaded file offline. They also exercise stale clients and a previous service-worker/schema upgrade.
 
-## Offline Support
+The offline regression disables ordinary HTTP caching, checks all emitted assets were precached, preserves unrelated origin caches and compares saved data after reload. The benchmark uses only synthetic process-local fake IndexedDB; it does not establish Android disk performance. Optional SQL access tests are described in docs/sync-strategy.md.
 
-`npm run build:pages` copies the built `index.html` to `404.html` for direct-route recovery and generates a content-versioned service worker. The generated worker precaches every file emitted by Vite, including the hashed JavaScript and CSS referenced by both HTML files.
+## Offline delivery and deployment
 
-After the first online page load has completed and the service worker has activated, the built app shell can reload without a connection. New releases use a content-derived cache name; activation removes only older `exercise-tracker-` caches. There is no manual cache version to bump.
+npm run build:pages generates an exact 404.html fallback and a content-versioned service worker that precaches all emitted assets, including optional code chunks. A successful initial online load and service-worker activation are required before offline use. After complete loss of shell caches and records, reacquire the shell online before restoring offline.
 
-See `docs/offline-support.md` for behavior, limitations, and troubleshooting.
+Pull requests verify without publishing permissions. A main push or workflow dispatch can deploy the tested artifact through the Pages workflow. No push, origin change or deployment is authorised merely by a configured remote or this README. Follow AGENTS.md.
 
-## Deployment
-
-Pull requests run the read-only verification job without Pages or identity-token permissions. Pushes to `main` run the same gate, upload the already-tested `dist` artifact, then pass it to a separate least-privilege deployment job. Third-party workflow actions are pinned to reviewed commit hashes.
-
-## Release Notes
-
-- Final deployment target: `https://stixape.github.io/ExerciseTracker/`
-- Release model: stable personal-use local-first PWA.
-- Known limitations: no cross-device sync, no account recovery, no cloud backup, no reminders, and no automatic progression.
-- Future sync direction: snapshot backup using the existing JSON export envelope, not record-level or real-time sync.
-
-## Hosted Testing Checklist
-
-- Open `https://stixape.github.io/ExerciseTracker/` on desktop and Android.
-- Install the PWA on Android and confirm it launches from the home-screen icon.
-- Start a workout, complete a set, and confirm the rest alarm works after interaction.
-- Reload `/ExerciseTracker/plan` and `/ExerciseTracker/settings` directly.
-- Export JSON, import that JSON, reject an invalid JSON file, and reset local data.
-- Turn off network after first load and confirm the app shell reloads.
-
-See `docs/release-checklist.md` for the final release checklist, `docs/offline-support.md` for the offline design, and `docs/sync-strategy.md` for the deferred sync direction.
+See [offline design](docs/offline-support.md) and the [release checklist](docs/release-checklist.md). Physical Android installation, alarms, folder permissions and hosted behaviour still require manual checks. No guaranteed closed-app backup, real-time cross-device merge or native wrapper is implemented.

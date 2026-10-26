@@ -3,6 +3,13 @@ import { getTemplateDayForToday } from './calendar';
 import { createDefaultAppData, createDefaultTemplate } from './sampleData';
 
 describe('default template', () => {
+  it('does not share a mutable palette between independent default datasets', () => {
+    const first = createDefaultAppData();
+    const second = createDefaultAppData();
+    first.bandColours[0].name = 'Changed only in first';
+    first.bandColours.push({ id: 'synthetic', name: 'Synthetic', hex: '#123456' });
+    expect(second.bandColours.some((band) => band.name === 'Changed only in first' || band.id === 'synthetic')).toBe(false);
+  });
   it('shows rest times by default', () => {
     expect(createDefaultAppData().settings.hideRestTimes).toBe(false);
   });

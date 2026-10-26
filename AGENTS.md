@@ -5,10 +5,10 @@ Use PROJECT_STATUS.md for the current handoff, ARCHITECTURE.md for system bounda
 ## Project rules
 
 - Preserve the local-first browser model, validated canonical IndexedDB snapshot, migrations and explicit JSON import/reset confirmations. Keep workout records out of source control and routine logs.
-- Sync, accounts and cloud backup are deferred; do not activate them based on an old plan or retained idea.
+- Optional versioned remote backup is implemented following the user's 2026-10-26 request, but defaults off. Do not provision or activate a backend, authentication or a new origin based on retained ideas. Require the configured dedicated origin, tested owner-only policies and explicit runtime opt-in; publishing still follows the approval rules below. Record-level/real-time sync remains deferred.
 - Use the Node/npm versions in package.json and the existing package-lock.json. Application changes use npm run verify (lint, unit tests, Pages build, browser and offline checks); follow README.md for setup. Documentation-only edits use content/reference and Git diff checks.
 - Build-generated service-worker caching must preserve unrelated origin caches and precache the actual built artifact.
-- Current code includes a hide-rest setting and editable/reorderable/removable band colours. Verify older descriptions of theme controls and fixed behavior against source before extending them.
+- Current code includes a hide-rest setting and editable/reorderable/archivable band colours. Verify older descriptions of theme controls and fixed behavior against source before extending them.
 
 ## Git and publishing
 

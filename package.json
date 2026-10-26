@@ -17,10 +17,13 @@
     "test:e2e": "playwright test",
     "test:pwa": "node scripts/verify-pwa.mjs",
     "test:watch": "vitest",
+    "benchmark:storage": "node scripts/benchmark-storage.mjs",
     "lint": "eslint .",
     "verify": "npm run lint && npm test && npm run build:pages && npm run test:e2e && npm run test:pwa"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "@supabase/supabase-js": "2.118.0",
     "dexie": "^4.4.2",
     "lucide-react": "^0.562.0",
     "react": "^19.2.5",
@@ -46,6 +49,6 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.59.1",
     "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.12"
   }
 }

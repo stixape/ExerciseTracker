@@ -30,9 +30,9 @@ Confirm the pull-request verification job passes before merging. On `main`, the 
 - Starting a workout, completing a set, and waiting/skipping rest keeps the workout usable.
 - Rest alarm plays after prior workout interaction.
 - JSON export downloads.
-- A valid JSON export imports successfully.
+- A valid JSON export previews and restores only after confirmation. Select downloaded JSON again to verify it.
 - Invalid JSON import shows an error and does not crash.
-- Reset clears local plan edits, sessions, active workout state, and custom bands after confirmation.
+- Reset replaces the current plan, sessions, active workout and bands after confirmation, retaining recovery sources/checkpoints and independent files. Remote uploads pause.
 
 ## Cache And Service Worker
 
@@ -55,7 +55,18 @@ See `offline-support.md` for the cache lifecycle and first-visit boundary.
 
 ## Release Boundaries
 
-- No accounts, backend sync, Supabase client, server-side migrations, or cloud data writes are expected in this release.
-- Browser storage is the only persistent data store unless the user exports JSON.
+- Accounts/cloud uploads default off. The optional integration needs a configured dedicated origin, tested owner-only policies and explicit opt-in. No backend/origin is provisioned by a local code change.
+- Device checkpoints share browser storage. Independent files and optional remote versions are separate recovery paths; none guarantees closed-app execution or permanent durability.
 - Clearing browser data or uninstalling the PWA can delete local records unless a JSON backup exists.
 - The meta content security policy is a GitHub Pages-compatible fallback. A host that can send HTTP security headers is required for policies such as `frame-ancestors` and HSTS.
+
+## Reliability acceptance
+
+- Run npm run verify with the pinned toolchain. The same built artifact must pass desktop/mobile origin-loss restoration, stale-window protection, invalid drafts and previous-worker/schema upgrade tests.
+- In a disposable physical Android Edge/Chrome profile, verify installation, folder selection, permission revocation/reconnection, download/re-selection, full browser-storage loss and offline restore. Use synthetic records; never clear an existing workout profile.
+- Verify saving/saved/failed states during quota/write failure and rescue export. Confirm import/reset cannot accept intervening edits while replacement is pending.
+- Confirm original legacy records remain exportable after migration, including failed business-data validation. Do not fix failures by writing defaults.
+- Confirm archived bands and removed exercises retain readable session values.
+- Before remote release, run the SQL tests from docs/sync-strategy.md and verify permissions, email delivery, PKCE redirect handling, expired authentication, retries and read-back validation in the intended service. Local workout saves must continue offline.
+- Verify a new installation/reset/import never uploads defaults automatically, retains old streams and requires remote-version review before resuming uploads.
+- Approve hosting/publishing separately. Synthetic/browser verification does not establish live deployment, physical Android pressure behaviour or hosted database health.

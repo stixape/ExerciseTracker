@@ -4,6 +4,8 @@ export interface BandColour {
   id: string;
   name: string;
   hex: string;
+  /** Hide from new selections without rewriting historical records. */
+  archived?: boolean;
 }
 
 export interface SetValues {

@@ -1,178 +1,227 @@
 import Dexie, { type EntityTable, type Transaction } from 'dexie';
-import { createDefaultAppData } from '../domain/sampleData';
+import { createId } from '../domain/ids';
 import type { ActiveWorkout, AppData } from '../domain/types';
 import { validateAppData, validateActiveWorkoutData } from './appDataSchema';
-import { clearLegacyLocalData, hasLegacyLocalData, readLegacyLocalData, restoreAppData } from './localData';
+import { readLegacyLocalData, readLegacyRaw, restoreAppData } from './localData';
+import { checksum } from './backupFormat';
 
-interface AppDataRecord {
+export interface AppSnapshot {
+  userId: string;
+  updatedAt: string;
+  revision: number;
+  snapshotId: string;
+  checksum: string;
+  data: AppData;
+}
+interface StoredRecord extends Partial<Omit<AppSnapshot, 'userId' | 'updatedAt' | 'data'>> {
   userId: string;
   updatedAt: string;
   data: AppData;
 }
-
-interface LegacyActiveWorkoutRecord {
+export type CheckpointReason = 'edit' | 'workout' | 'set' | 'import' | 'reset' | 'restore' | 'migration' | 'initialise';
+export interface Checkpoint extends AppSnapshot {
   id: string;
-  userId: string;
-  updatedAt: string;
-  activeWorkout: ActiveWorkout;
+  reason: CheckpointReason;
+  createdAt: string;
+  pinned: boolean;
+}
+export interface CheckpointSummary {
+  id: string; userId: string; revision: number; createdAt: string;
+  pinned: boolean; reason: CheckpointReason; planName: string; sessionCount: number;
+}
+interface RecoverySource { id: string; userId: string; createdAt: string; source: string; raw: unknown }
+export interface Preference { key: string; value: unknown }
+export type LoadResult = { kind: 'ready'; snapshot: AppSnapshot } | { kind: 'empty' } |
+  { kind: 'recovery_required'; reason: string; revision: number | null };
+
+export class StorageConflictError extends Error {
+  constructor() { super('Another window changed the saved data. Your unsaved changes have been kept. Reload and review before saving.'); this.name = 'StorageConflictError'; }
 }
 
-class ExerciseTrackerDb extends Dexie {
-  appData!: EntityTable<AppDataRecord, 'userId'>;
+const sourceSchema = 'id, userId, createdAt';
+export class ExerciseTrackerDb extends Dexie {
+  appData!: EntityTable<StoredRecord, 'userId'>;
+  checkpoints!: EntityTable<Checkpoint, 'id'>;
+  checkpointIndex!: EntityTable<CheckpointSummary, 'id'>;
+  recoverySources!: EntityTable<RecoverySource, 'id'>;
+  preferences!: EntityTable<Preference, 'key'>;
 
-  constructor() {
-    super('ExerciseTracker');
-
-    // Historical schema retained so Dexie can upgrade existing installations.
-    this.version(1).stores({
-      activeWorkouts: 'id, userId, updatedAt',
-      syncQueue: 'id, userId, createdAt, type',
+  constructor(name = 'ExerciseTracker') {
+    super(name, { chromeTransactionDurability: 'strict' });
+    this.version(1).stores({ activeWorkouts: 'id, userId, updatedAt', syncQueue: 'id, userId, createdAt, type' });
+    // Dexie removes retired tables AFTER their content upgrade, atomically.
+    // Archive the original sources before any historical normalization/removal.
+    this.version(2).stores({ appData: '&userId, updatedAt', activeWorkouts: 'id, userId, updatedAt', syncQueue: null, recoverySources: sourceSchema })
+      .upgrade(migrateVersionOne);
+    this.version(3).stores({ appData: '&userId, updatedAt', activeWorkouts: null });
+    this.version(4).stores({ appData: '&userId, updatedAt', recoverySources: sourceSchema }).upgrade(migrateCanonical);
+    this.version(5).stores({ appData: '&userId, updatedAt', recoverySources: sourceSchema }).upgrade(migrateCanonical);
+    this.version(6).stores({ appData: '&userId, updatedAt', recoverySources: sourceSchema,
+      checkpoints: 'id, userId, createdAt', checkpointIndex: 'id, userId, createdAt', preferences: '&key' }).upgrade(async (tx) => {
+      const table = tx.table<StoredRecord>('appData');
+      for (const record of await table.toArray()) {
+        await archive(tx, record.userId, 'schema-v6', record);
+        const result = restoreAppData(record.data, record.userId, false);
+        // Finish the structural upgrade even for invalid business data so a
+        // confirmed restore can run. Its exact source is retained above; no
+        // invalid value is normalized into defaults or exposed as ready data.
+        await table.put(makeSnapshot(result.ok ? result.data : record.data, 1));
+      }
     });
-
-    // Copy a legacy active workout into the canonical snapshot and remove the
-    // unused sync queue. The localStorage snapshot remains until a verified read.
-    this.version(2)
-      .stores({
-        appData: '&userId, updatedAt',
-        activeWorkouts: 'id, userId, updatedAt',
-        syncQueue: null,
-      })
-      .upgrade((transaction) => migrateVersionOne(transaction));
-
-    // appData is now the only source of truth.
-    this.version(3).stores({
-      appData: '&userId, updatedAt',
-      activeWorkouts: null,
-    });
-
-    // Remove the retired left/right repetition shape from every canonical
-    // snapshot while preserving workouts, set counts, and recorded rests.
-    this.version(4)
-      .stores({
-        appData: '&userId, updatedAt',
-      })
-      .upgrade((transaction) => migrateVersionThree(transaction));
-
-    // Replace the retired light/dark preference with the workout rest setting.
-    this.version(5)
-      .stores({
-        appData: '&userId, updatedAt',
-      })
-      .upgrade((transaction) => migrateVersionFour(transaction));
   }
 }
 
-async function migrateVersionOne(transaction: Transaction): Promise<void> {
-  const activeRecords = await transaction.table<LegacyActiveWorkoutRecord>('activeWorkouts').toArray();
-  const appDataTable = transaction.table<AppDataRecord>('appData');
+async function archive(tx: Transaction, userId: string, source: string, raw: unknown) {
+  await tx.table<RecoverySource>('recoverySources').put({ id: createId('source'), userId, source, raw, createdAt: new Date().toISOString() });
+}
 
+async function migrateVersionOne(tx: Transaction) {
+  for (const queued of await tx.table<{ userId: string }>('syncQueue').toArray()) await archive(tx, queued.userId, 'legacy-sync-queue', queued);
+  const activeRecords = await tx.table<{ userId: string; activeWorkout: ActiveWorkout }>('activeWorkouts').toArray();
   for (const record of activeRecords) {
-    const legacyData = readLegacyLocalData(record.userId);
-    const baseData = legacyData ?? createDefaultAppData(record.userId);
-    const candidate =
-      baseData.activeWorkout || !validateActiveWorkoutData(record.activeWorkout, baseData.bandColours)
-        ? baseData
-        : { ...baseData, activeWorkout: record.activeWorkout };
+    await archive(tx, record.userId, 'legacy-active-workout', record);
+    let legacy: ReturnType<typeof readLegacyLocalData>;
+    try { legacy = readLegacyLocalData(record.userId); }
+    catch { await archive(tx, record.userId, 'unconverted-active-workout', record); continue; }
+    if (legacy.kind === 'invalid') { await archive(tx, record.userId, 'unconverted-localStorage', legacy.raw); continue; }
+    if (legacy.kind === 'absent') { await archive(tx, record.userId, 'unconverted-active-workout', record); continue; }
+    const base = legacy.data;
+    await archive(tx, record.userId, 'legacy-localStorage', legacy.raw);
+    if (!validateActiveWorkoutData(record.activeWorkout, base.bandColours)) { await archive(tx, record.userId, 'unconverted-active-workout', record); continue; }
+    const candidate = base.activeWorkout ? base : { ...base, activeWorkout: record.activeWorkout };
     const restored = restoreAppData(candidate, record.userId);
-    if (!restored.ok) continue;
-
-    await appDataTable.put({
-      userId: record.userId,
-      updatedAt: record.updatedAt,
-      data: restored.data,
-    });
+    if (!restored.ok) { await archive(tx, record.userId, 'unconverted-active-workout', record); continue; }
+    await tx.table<StoredRecord>('appData').put({ userId: record.userId, updatedAt: new Date().toISOString(), data: restored.data });
   }
 }
 
-async function migrateVersionThree(transaction: Transaction): Promise<void> {
-  const appDataTable = transaction.table<AppDataRecord>('appData');
-  const records = await appDataTable.toArray();
-
-  for (const record of records) {
+async function migrateCanonical(tx: Transaction) {
+  const table = tx.table<StoredRecord>('appData');
+  for (const record of await table.toArray()) {
+    await archive(tx, record.userId, 'historical-schema', record);
     const restored = restoreAppData(record.data, record.userId, false);
-    if (!restored.ok) throw new Error(`Stored ExerciseTracker data could not be upgraded: ${restored.error}`);
-    await appDataTable.put({ ...record, data: restored.data });
+    if (restored.ok) await table.put({ ...record, data: restored.data });
   }
 }
 
-async function migrateVersionFour(transaction: Transaction): Promise<void> {
-  const appDataTable = transaction.table<AppDataRecord>('appData');
-  const records = await appDataTable.toArray();
+function makeSnapshot(data: AppData, revision: number): AppSnapshot {
+  return { userId: data.userId, revision, data: structuredClone(data), updatedAt: new Date().toISOString(),
+    snapshotId: createId('snapshot'), checksum: checksum(data) };
+}
+function revisionOf(record: StoredRecord | undefined): number | null {
+  return record ? Number.isSafeInteger(record.revision) && record.revision! >= 0 ? record.revision! : 0 : null;
+}
+function isPinned(reason: CheckpointReason) { return ['import', 'reset', 'restore', 'migration'].includes(reason); }
 
-  for (const record of records) {
-    const restored = restoreAppData(record.data, record.userId, false, false, true);
-    if (!restored.ok) throw new Error(`Stored ExerciseTracker settings could not be upgraded: ${restored.error}`);
-    await appDataTable.put({ ...record, data: restored.data });
+/** Shared retention rule for local checkpoints and independently verified files. */
+export function retainedCheckpointIds(records: { id: string; createdAt: string; pinned: boolean; revision?: number }[]): Set<string> {
+  const sorted = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || (b.revision ?? 0) - (a.revision ?? 0) || b.id.localeCompare(a.id));
+  const keep = new Set(sorted.slice(0, 20).map((item) => item.id));
+  const days = new Set<string>();
+  for (const record of sorted) {
+    const day = record.createdAt.slice(0, 10);
+    if (record.pinned || (!days.has(day) && days.size < 30)) keep.add(record.id);
+    days.add(day);
   }
+  return keep;
 }
 
 export const offlineDb = new ExerciseTrackerDb();
 
-const writeTails = new Map<string, Promise<void>>();
-
-function afterPendingWrite(userId: string): Promise<void> {
-  return writeTails.get(userId)?.catch(() => undefined) ?? Promise.resolve();
-}
-
-function enqueueWrite(userId: string, write: () => Promise<void>): Promise<void> {
-  const previous = afterPendingWrite(userId);
-  const operation = previous.then(write);
-  writeTails.set(userId, operation);
-  operation.then(
-    () => {
-      if (writeTails.get(userId) === operation) writeTails.delete(userId);
-    },
-    () => {
-      if (writeTails.get(userId) === operation) writeTails.delete(userId);
-    },
-  );
-  return operation;
-}
-
-/** Loads the sole canonical snapshot, migrating legacy localStorage once. */
-export async function loadAppData(userId: string): Promise<AppData> {
-  await afterPendingWrite(userId);
-  const record = await offlineDb.appData.get(userId);
-  if (record) {
-    const restored = restoreAppData(record.data, userId, false);
-    if (restored.ok) {
-      if (hasLegacyLocalData(userId)) clearLegacyLocalData(userId);
-      return restored.data;
+export async function loadAppData(userId: string): Promise<LoadResult> {
+  try {
+    if (!offlineDb.isOpen()) await offlineDb.open();
+    const record = await offlineDb.appData.get(userId);
+    if (record) {
+      const restored = restoreAppData(record.data, userId, false);
+      if (!restored.ok || !Number.isSafeInteger(record.revision) || record.revision! < 1 ||
+        !record.snapshotId || record.checksum !== checksum(record.data) || (restored.ok && record.checksum !== checksum(restored.data))) {
+        return { kind: 'recovery_required', reason: 'Saved data failed validation. The original record has been left untouched.', revision: revisionOf(record) };
+      }
+      return { kind: 'ready', snapshot: { ...record, data: restored.data } as AppSnapshot };
     }
-    throw new Error(`Stored ExerciseTracker data is invalid and was left untouched: ${restored.error}`);
+    const legacy = readLegacyLocalData(userId);
+    const sources = await offlineDb.recoverySources.where('userId').equals(userId).toArray();
+    if (sources.some((source) => source.source.startsWith('unconverted-'))) return { kind: 'recovery_required', reason: 'Original legacy records are retained but need recovery. No starter plan was written.', revision: null };
+    if (legacy.kind === 'invalid') return { kind: 'recovery_required', reason: 'Legacy data could not be read. Its original contents have been preserved.', revision: null };
+    if (legacy.kind === 'valid') return { kind: 'ready', snapshot: await commitAppData(legacy.data, null, 'migration') };
+    return { kind: 'empty' };
+  } catch {
+    return { kind: 'recovery_required', reason: 'Saved data could not be opened. No starter plan was written. Export the original records or try reopening the app.', revision: null };
   }
-
-  const hadLegacyRecord = hasLegacyLocalData(userId);
-  const legacyData = readLegacyLocalData(userId);
-  const data = legacyData ?? createDefaultAppData(userId);
-  await saveAppData(data);
-  if (hadLegacyRecord) clearLegacyLocalData(userId);
-  return data;
 }
 
-/** Serializes writes per user so rapid React updates cannot complete out of order. */
-export async function saveAppData(data: AppData): Promise<void> {
+/** A cross-window compare-and-replace transaction, never an unconditional put. */
+export async function commitAppData(data: AppData, expectedRevision: number | null, reason: CheckpointReason = 'edit'): Promise<AppSnapshot> {
   const validation = validateAppData(data);
-  if (!validation.ok) throw new TypeError(`ExerciseTracker data could not be saved: ${validation.error}`);
-  const snapshot = structuredClone(validation.data);
-
-  await enqueueWrite(data.userId, async () => {
-    await offlineDb.appData.put({
-      userId: data.userId,
-      updatedAt: new Date().toISOString(),
-      data: snapshot,
-    });
+  if (!validation.ok) throw new TypeError('Data validation failed; the saved record was not changed.');
+  if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER)) throw new TypeError('Invalid revision.');
+  const next = makeSnapshot(data, (expectedRevision ?? 0) + 1);
+  await offlineDb.transaction('rw', [offlineDb.appData, offlineDb.checkpoints, offlineDb.checkpointIndex, offlineDb.recoverySources, offlineDb.preferences], async (tx) => {
+    const previous = await offlineDb.appData.get(data.userId);
+    if (revisionOf(previous) !== expectedRevision) throw new StorageConflictError();
+    if (previous && isPinned(reason)) await archive(tx, data.userId, `before-${reason}`, previous);
+    if (isPinned(reason)) {
+      let legacyRaw: string | null = null;
+      try { legacyRaw = readLegacyRaw(data.userId); } catch { /* Inaccessible legacy storage is never changed or cleared. */ }
+      if (legacyRaw !== null) await archive(tx, data.userId, `legacy-before-${reason}`, legacyRaw);
+    }
+    // Enumerate only small summaries during ordinary saves. Reading dozens of
+    // full-history snapshots on every keystroke is prohibitively expensive.
+    const records = await offlineDb.checkpointIndex.where('userId').equals(data.userId).toArray();
+    const lastEdit = records.filter((item) => item.reason === 'edit' && typeof item.createdAt === 'string').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    const checkpointDue = reason !== 'edit' || !lastEdit || Date.parse(next.updatedAt) - Date.parse(lastEdit.createdAt) >= 1_000;
+    if (previous?.revision && checkpointDue && validateAppData(previous.data).ok && previous.checksum === checksum(previous.data)) {
+      await offlineDb.checkpoints.put({ ...previous, id: previous.snapshotId!, revision: previous.revision,
+        snapshotId: previous.snapshotId!, checksum: previous.checksum!, createdAt: previous.updatedAt, pinned: isPinned(reason), reason });
+      await offlineDb.checkpointIndex.put({ id: previous.snapshotId!, userId: previous.userId, revision: previous.revision,
+        createdAt: previous.updatedAt, pinned: isPinned(reason), reason, planName: previous.data.template.name, sessionCount: previous.data.sessions.length });
+    }
+    await offlineDb.appData.put(next);
+    if (['initialise', 'import', 'reset', 'restore'].includes(reason)) {
+      await offlineDb.preferences.put({ key: 'remote-approved', value: false });
+      // A new restore/reset lineage cannot prune the previous installation's
+      // remote stream, even if it happened offline before a protected upload.
+      await offlineDb.preferences.delete('backup-device-id');
+    }
+    const currentRecords = (await offlineDb.checkpointIndex.where('userId').equals(data.userId).toArray())
+      .filter((item) => typeof item.id === 'string' && typeof item.createdAt === 'string' && !Number.isNaN(Date.parse(item.createdAt)));
+    const keep = retainedCheckpointIds(currentRecords);
+    for (const item of currentRecords.filter((record) => !keep.has(record.id))) {
+      const payload = await offlineDb.checkpoints.get(item.id);
+      if (payload && !isValidCheckpoint(payload)) { await offlineDb.checkpointIndex.put({ ...item, pinned: true }); continue; }
+      await offlineDb.checkpoints.delete(item.id);
+      await offlineDb.checkpointIndex.delete(item.id);
+    }
   });
+  return next;
 }
 
-export async function resetAppData(userId: string): Promise<AppData> {
-  const data = createDefaultAppData(userId);
-  await saveAppData(data);
-  clearLegacyLocalData(userId);
-  return data;
+export async function listCheckpoints(userId: string): Promise<CheckpointSummary[]> {
+  return (await offlineDb.checkpointIndex.where('userId').equals(userId).toArray()).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.revision - a.revision);
+}
+export async function readCheckpoint(userId: string, id: string): Promise<Checkpoint> {
+  const record = await offlineDb.checkpoints.get(id);
+  if (!record || record.userId !== userId || !isValidCheckpoint(record)) throw new Error('This checkpoint cannot be restored. Its original data was preserved.');
+  return record;
 }
 
-export async function clearAppData(userId: string): Promise<void> {
-  await enqueueWrite(userId, () => offlineDb.appData.delete(userId));
-  clearLegacyLocalData(userId);
+function isValidCheckpoint(record: Checkpoint): boolean {
+  return typeof record.createdAt === 'string' && !Number.isNaN(Date.parse(record.createdAt)) &&
+    validateAppData(record.data).ok && checksum(record.data) === record.checksum;
+}
+
+/** Versionless read-only access also works after a rolled-back schema upgrade. */
+export async function createRawRecoveryExport(userId: string): Promise<string> {
+  const rawDb = new Dexie('ExerciseTracker');
+  try {
+    await rawDb.open();
+    const tables: Record<string, unknown> = {};
+    for (const table of rawDb.tables.filter((item) => item.name !== 'preferences')) {
+      tables[table.name] = (await table.toArray()).filter((item: { userId?: string }) => item.userId === userId);
+    }
+    let legacy: string | null | { unavailable: true };
+    try { legacy = readLegacyRaw(userId); } catch { legacy = { unavailable: true }; }
+    return JSON.stringify({ format: 'ExerciseTracker raw recovery sources', exportedAt: new Date().toISOString(), tables, legacy }, null, 2);
+  } finally { rawDb.close(); }
 }

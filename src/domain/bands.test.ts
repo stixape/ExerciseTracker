@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { validateAppData } from '../lib/appDataSchema';
 import { createDefaultAppData } from './sampleData';
 import { createSessionFromDay } from './session';
-import { removeBandColour, reorderBandColours } from './bands';
+import { archiveBandColour, reorderBandColours } from './bands';
 import { formatBandNames } from '../lib/workoutFormatting';
 
 describe('band colour management', () => {
@@ -21,7 +21,7 @@ describe('band colour management', () => {
     expect(formatBandNames(['band_yellow', 'band_blue'], reordered)).toBe('Blue + Yellow');
   });
 
-  it('deletes a used band from plans, saved workouts, and the active workout', () => {
+  it('archives a used band without changing any plans or workout records', () => {
     const data = createDefaultAppData();
     const session = createSessionFromDay(data.template.days[0]);
     const completedAt = new Date(Date.parse(session.startedAt) + 60_000).toISOString();
@@ -36,10 +36,12 @@ describe('band colour management', () => {
     data.sessions = [completedSession];
     data.activeWorkout = { session: { ...structuredClone(session), id: 'active-session' } };
 
-    const next = removeBandColour(data, 'band_red');
+    const next = archiveBandColour(data, 'band_red');
 
-    expect(next.bandColours.some((band) => band.id === 'band_red')).toBe(false);
-    expect(JSON.stringify(next)).not.toContain('band_red');
+    expect(next.bandColours.find((band) => band.id === 'band_red')?.archived).toBe(true);
+    expect(next.sessions).toEqual(data.sessions);
+    expect(next.template).toEqual(data.template);
+    expect(next.activeWorkout).toEqual(data.activeWorkout);
     const validation = validateAppData(next);
     expect(validation.ok, validation.ok ? undefined : validation.error).toBe(true);
   });

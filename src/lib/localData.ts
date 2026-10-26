@@ -11,6 +11,7 @@ import type {
   WorkoutSession,
 } from '../domain/types';
 import { isValidIsoDateTime, validateAppData } from './appDataSchema';
+import { backupChecksum, type BackupIdentity } from './backupFormat';
 
 const STORAGE_PREFIX = 'exercise-tracker:data:';
 const storageKey = (userId: string) => `${STORAGE_PREFIX}${userId}`;
@@ -24,6 +25,7 @@ const JSON_DATA_MIGRATIONS: Readonly<Record<number, JsonDataMigration>> = {
   1: (data) => structuredClone(data),
   2: (data) => structuredClone(data),
   3: (data) => structuredClone(data),
+  4: (data) => structuredClone(data),
 };
 
 type LegacySetValues = SetValues & { leftReps?: number; rightReps?: number };
@@ -192,21 +194,21 @@ export function restoreAppData(
   return finalValidation.ok ? { ok: true, data: finalValidation.data } : { ok: false, error: finalValidation.error };
 }
 
-export function readLegacyLocalData(userId: string): AppData | undefined {
-  if (typeof localStorage === 'undefined') return undefined;
-  const raw = localStorage.getItem(storageKey(userId));
-  if (!raw) return undefined;
+export type LegacyReadResult = { kind: 'absent' } | { kind: 'valid'; data: AppData; raw: string } | { kind: 'invalid'; raw: string };
 
+export function readLegacyLocalData(userId: string): LegacyReadResult {
+  const raw = readLegacyRaw(userId);
+  if (raw === null) return { kind: 'absent' };
   try {
     const restored = restoreAppData(JSON.parse(raw), userId);
-    return restored.ok ? restored.data : undefined;
+    return restored.ok ? { kind: 'valid', data: restored.data, raw } : { kind: 'invalid', raw };
   } catch {
-    return undefined;
+    return { kind: 'invalid', raw };
   }
 }
 
-export function hasLegacyLocalData(userId: string): boolean {
-  return typeof localStorage !== 'undefined' && localStorage.getItem(storageKey(userId)) !== null;
+export function readLegacyRaw(userId: string): string | null {
+  return typeof localStorage === 'undefined' ? null : localStorage.getItem(storageKey(userId));
 }
 
 export function parseJsonImport(raw: string, userId: string): JsonImportResult {
@@ -227,13 +229,18 @@ export function parseJsonImport(raw: string, userId: string): JsonImportResult {
   }
 
   const sourceVersion = parsed.version as number;
+  if (sourceVersion === 5) {
+    const backup = parsed.backup;
+    if (!isObject(backup) || typeof backup.snapshotId !== 'string' || !backup.snapshotId.trim() || backup.snapshotId.length > 256 ||
+      !Number.isSafeInteger(backup.revision) || (backup.revision as number) < 0 || !isValidIsoDateTime(backup.savedAt) ||
+      typeof parsed.checksum !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.checksum) ||
+      backupChecksum(parsed.data as AppData, backup as unknown as BackupIdentity) !== parsed.checksum) {
+      return { ok: false, error: 'Backup integrity check failed. The file is incomplete or has changed.' };
+    }
+  }
   const migration = migrateJsonData(parsed.data, sourceVersion);
   if (!migration.ok) return migration;
 
   const restored = restoreAppData(migration.data, userId, sourceVersion === 1, sourceVersion < 3, sourceVersion < 4);
   return restored.ok ? restored : { ok: false, error: `Import data is invalid: ${restored.error}` };
-}
-
-export function clearLegacyLocalData(userId: string): void {
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(storageKey(userId));
 }

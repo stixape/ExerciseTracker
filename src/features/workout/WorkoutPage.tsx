@@ -11,6 +11,7 @@ import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, stageS
 import { playRestAlarm, primeAlarmAudio } from '../../lib/alarm';
 import { formatBandNames, formatSetActual } from '../../lib/workoutFormatting';
 import { useTracker } from '../../app/TrackerContext';
+import { ValidatedInput } from '../../components/ValidatedInput';
 
 export function WorkoutPage() {
   const { dayId } = useParams();
@@ -96,6 +97,8 @@ export function WorkoutPage() {
   }
 
   function completeWorkoutSet(set: SessionSet) {
+    const invalid = document.querySelector<HTMLInputElement>('.focused-workout-screen input[aria-invalid="true"]');
+    if (invalid) { invalid.reportValidity(); return; }
     if (!data.settings.hideRestTimes) primeAlarmAudio();
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
@@ -120,7 +123,7 @@ export function WorkoutPage() {
           selectedSetId: undefined,
         },
       };
-    });
+    }, 'set');
   }
 
   function updateRest(updater: (session: WorkoutSession, rest: ActiveRest) => { session: WorkoutSession; activeRest?: ActiveRest }) {
@@ -204,9 +207,9 @@ export function WorkoutPage() {
     primeAlarmAudio();
   }
 
-  function saveCompletedWorkout() {
+  async function saveCompletedWorkout() {
     if (!session?.completedAt) return;
-    saveData((current) => {
+    const saved = await saveData((current) => {
       if (!current.activeWorkout?.session.completedAt) return current;
       const completedSession = current.activeWorkout.session;
       const template = applySessionProgressions(current.template, completedSession, current.bandColours.map((band) => band.id));
@@ -216,8 +219,8 @@ export function WorkoutPage() {
         sessions: [completedSession, ...current.sessions.filter((item) => item.id !== completedSession.id)],
         activeWorkout: undefined,
       };
-    });
-    navigate('/progress');
+    }, 'workout');
+    if (saved) navigate('/progress');
   }
 
   if (!session && day) {
@@ -399,12 +402,6 @@ function useScreenWakeLock(enabled: boolean) {
   }, [enabled]);
 }
 
-
-function parseOptionalNumber(value: string): number | undefined {
-  if (value === '') return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
 
 function EmptyActiveWorkout({
   session,
@@ -930,7 +927,7 @@ function NumberStepper({
           −
         </button>
         <div className="number-input-wrap">
-          <input
+          <ValidatedInput
             id={inputId}
             type="number"
             inputMode={step % 1 === 0 ? 'numeric' : 'decimal'}
@@ -938,7 +935,9 @@ function NumberStepper({
             step={step}
             value={value ?? ''}
             placeholder={placeholder === undefined ? undefined : String(placeholder)}
-            onChange={(event) => onChange(parseOptionalNumber(event.target.value))}
+            optional={label.startsWith('Next')}
+            whole={step % 1 === 0}
+            onValue={(next) => onChange(next === '' ? undefined : Number(next))}
           />
           {suffix && <span aria-hidden="true">{suffix}</span>}
         </div>
@@ -965,7 +964,7 @@ function BandPicker({
     <fieldset className="band-fieldset">
       <legend>{label}</legend>
       <div className="band-picker">
-        {bandColours.map((band) => {
+        {bandColours.filter((band) => !band.archived || selectedIds.includes(band.id)).map((band) => {
           const active = selectedIds.includes(band.id);
           return (
             <button

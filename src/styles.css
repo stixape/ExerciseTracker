@@ -1861,3 +1861,22 @@ select,
     font-size: 1.2rem;
   }
 }
+/* Recovery controls remain outside the disabled editing fieldset. */
+.app-interaction { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
+.save-status, .backup-reminder { padding: .4rem 1rem; background: #e6f1ee; color: #174f48; font-size: .85rem; overflow-wrap: anywhere; }
+.backup-reminder { background: #fff4d7; color: #654c13; }
+.recovery-screen { max-width: 48rem; margin: 2rem auto; padding: 1rem; }
+.backup-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; align-items: center; }
+.backup-controls details { flex-basis: 100%; }
+.backup-panel > p { margin: .65rem 0; line-height: 1.5; }
+.backup-panel button:not([class]), .backup-controls button:not([class]), .checkpoint-browser button:not([class]) {
+  min-height: 44px; max-width: 100%; padding: .7rem .9rem; border: 1px solid #b9d0c9;
+  border-radius: .65rem; background: #fff; color: #174f48; font: inherit; font-weight: 600; cursor: pointer;
+}
+.backup-panel button:disabled, .backup-controls button:disabled { opacity: .55; cursor: default; }
+.recovery-preview, .checkpoint-browser, .backup-import { margin: 1rem 0; padding: 1rem; border: 1px solid #b9d0c9; border-radius: .75rem; }
+.checkpoint-browser details { margin-top: .75rem; }
+.recovery-preview button, .checkpoint-browser button { margin: .5rem .5rem .5rem 0; }
+input[aria-invalid="true"] { outline: 2px solid #af352c; outline-offset: 2px; }
+.recorded-session { margin-top: .75rem; max-width: 100%; }
+.recorded-session p { margin: .25rem 0; }

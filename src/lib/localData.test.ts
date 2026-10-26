@@ -99,9 +99,9 @@ describe('local data import, normalization, and legacy fallback', () => {
 
   it('rejects invalid JSON and unsupported export versions with clear errors', () => {
     expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
-    expect(parseJsonImport(JSON.stringify({ version: 5, data: createDefaultAppData(userId) }), userId)).toEqual({
+    expect(parseJsonImport(JSON.stringify({ version: 6, data: createDefaultAppData(userId) }), userId)).toEqual({
       ok: false,
-      error: 'Import file uses unsupported version 5. Supported versions are 1-4.',
+      error: 'Import file uses unsupported version 6. Supported versions are 1-5.',
     });
   });
 
@@ -190,6 +190,6 @@ describe('local data import, normalization, and legacy fallback', () => {
   it('falls back safely when a legacy localStorage record is corrupt', () => {
     localStorage.setItem(`exercise-tracker:data:${userId}`, JSON.stringify({ userId, sessions: 'bad' }));
 
-    expect(readLegacyLocalData(userId)).toBeUndefined();
+    expect(readLegacyLocalData(userId).kind).toBe('invalid');
   });
 });

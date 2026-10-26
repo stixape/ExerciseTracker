@@ -575,6 +575,7 @@ function validateBandColours(value: unknown, path: string): { error?: string; ba
     if (!isRecord(band)) return { error: `${path}[${index}] must be an object.` };
     const bandError = idError(band.id, `${path}[${index}].id`) ?? stringError(band.name, `${path}[${index}].name`, 'a band name');
     if (bandError) return { error: bandError };
+    if (band.archived !== undefined && typeof band.archived !== 'boolean') return { error: `${path}[${index}].archived must be a boolean.` };
     if (typeof band.hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(band.hex)) return { error: `${path}[${index}].hex must be a six-digit hex colour.` };
   }
   const typedBands = bands as BandColour[];
