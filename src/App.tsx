@@ -25,6 +25,7 @@ import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
 import { createSessionFromDay, updateExerciseNotes } from './domain/session';
 import { changeModifierValue, MAX_REST_SECONDS, modifierValue } from './domain/modifiers';
+import { rangeMetric } from './domain/targetRange';
 import type {
   BandColour,
   MetricMode,
@@ -33,6 +34,7 @@ import type {
   SetValues,
   TemplateDay,
   TemplateExercise,
+  TemplateSet,
   WorkoutSession,
 } from './domain/types';
 import { primeAlarmAudio } from './lib/alarm';
@@ -40,7 +42,8 @@ import { BackupPanel } from './components/BackupPanel';
 import { ValidatedInput } from './components/ValidatedInput';
 import { ExerciseNotes } from './components/ExerciseNotes';
 import { ModifierInput } from './components/ModifierInput';
-import { formatActualReps, formatBandNames, formatPlannedValues, formatSetActual } from './lib/workoutFormatting';
+import { TargetRangeInput } from './components/TargetRangeInput';
+import { formatActualReps, formatBandNames, formatPlannedSets, formatSetActual } from './lib/workoutFormatting';
 import { WorkoutPage } from './features/workout/WorkoutPage';
 
 function App() {
@@ -173,19 +176,12 @@ function WorkoutLanding() {
       </header>
       {day && day.exercises.length > 0 && (
         <ol className="today-plan" aria-label="Planned exercises" tabIndex={0}>
-          {day.exercises.map((exercise) => {
-            const targets = exercise.sets.map((set) => formatPlannedValues(exercise.mode, set.target, data.bandColours, exercise.modifiers));
-            const uniform = targets.every((target) => target === targets[0]);
-            return (
-              <li key={exercise.id}>
-                <strong>{exercise.name}</strong>
-                <p>{targets.length} {targets.length === 1 ? 'set' : 'sets'}{uniform && targets[0] ? ` · ${targets[0]}` : ''}</p>
-                {!uniform && <ul>{targets.map((target, index) => (
-                  <li key={exercise.sets[index].id}>Set {exercise.sets[index].setNumber} · {target}</li>
-                ))}</ul>}
-              </li>
-            );
-          })}
+          {day.exercises.map((exercise) => (
+            <li key={exercise.id}>
+              <strong>{exercise.name}</strong>
+              <p>{formatPlannedSets(exercise, data.bandColours)}</p>
+            </li>
+          ))}
         </ol>
       )}
       <footer className="today-action">
@@ -386,6 +382,7 @@ function PlanExerciseEditor({
       modifiers: undefined,
       sets: current.sets.map((set) => ({
         ...set,
+        rangeMax: rangeMetric(current.mode) === rangeMetric(mode) ? set.rangeMax : undefined,
         target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, set.target),
       })),
     }));
@@ -508,12 +505,12 @@ function PlanExerciseEditor({
               <SetValueEditor
                 mode={exercise.mode}
                 modifiers={exercise.modifiers}
-                values={set.target}
+                set={set}
                 bandColours={bandColours}
-                onChange={(target) =>
+                onChange={(updateSet) =>
                   onChange((current) => ({
                     ...current,
-                    sets: current.sets.map((item) => (item.id === set.id ? { ...item, target } : item)),
+                    sets: current.sets.map((item) => (item.id === set.id ? updateSet(item) : item)),
                   }))
                 }
               />
@@ -554,20 +551,20 @@ function getNumericInputStyle(value: number | undefined): React.CSSProperties {
 function SetValueEditor({
   mode,
   modifiers,
-  values,
+  set,
   bandColours,
   onChange,
-  disabled,
 }: {
   mode: MetricMode;
   modifiers?: Modifier[];
-  values: SetValues;
+  set: TemplateSet;
   bandColours: BandColour[];
-  onChange: (values: SetValues) => void;
-  disabled?: boolean;
+  onChange: (updateSet: (set: TemplateSet) => TemplateSet) => void;
 }) {
+  const values = set.target;
+
   function patch(next: Partial<SetValues>) {
-    onChange({ ...values, ...next });
+    onChange((current) => ({ ...current, target: { ...current.target, ...next } }));
   }
 
   if (mode === 'other') {
@@ -577,38 +574,26 @@ function SetValueEditor({
     ))}</div>;
   }
 
-  if (mode === 'timed_hold') {
-    return (
-      <label className="compact-field">
-        Seconds
-        <ValidatedInput
-          className="numeric-input"
-          style={getNumericInputStyle(values.seconds)}
-          disabled={disabled}
-          type="number"
-          min={0}
-          value={values.seconds ?? ''}
-          whole onValue={(value) => patch({ seconds: Number(value) })}
-        />
-      </label>
-    );
-  }
+  const metric = mode === 'timed_hold' ? 'seconds' : 'reps';
+  const rangeInput = (
+    <TargetRangeInput
+      label={metric === 'seconds' ? 'Seconds' : 'Repetitions'}
+      seconds={metric === 'seconds'}
+      min={values[metric] ?? 0}
+      max={set.rangeMax}
+      onValue={({ min, max }) => onChange((current) => ({
+        ...current,
+        target: { ...current.target, [metric]: min },
+        rangeMax: max,
+      }))}
+    />
+  );
+  if (mode === 'timed_hold') return rangeInput;
 
   if (mode === 'band_reps') {
     return (
       <div className="value-editor">
-        <label className="compact-field">
-          Repetitions
-          <ValidatedInput
-            className="numeric-input"
-            style={getNumericInputStyle(values.reps)}
-            disabled={disabled}
-            type="number"
-            min={0}
-            value={values.reps ?? ''}
-            whole onValue={(value) => patch({ reps: Number(value) })}
-          />
-        </label>
+        {rangeInput}
         <div className="band-picker" aria-label="Band colours">
           {bandColours.filter((band) => !band.archived || values.bandColourIds?.includes(band.id)).map((band) => {
             const active = values.bandColourIds?.includes(band.id) ?? false;
@@ -621,7 +606,6 @@ function SetValueEditor({
                 aria-label={`${band.name} band`}
                 aria-pressed={active}
                 title={band.name}
-                disabled={disabled}
                 onClick={() => {
                   const current = values.bandColourIds ?? [];
                   patch({
@@ -643,7 +627,6 @@ function SetValueEditor({
         <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.weightKg)}
-          disabled={disabled}
           type="number"
           min={0}
           step={0.5}
@@ -651,18 +634,7 @@ function SetValueEditor({
           onValue={(value) => patch({ weightKg: Number(value) })}
         />
       </label>
-      <label className="compact-field">
-        Repetitions
-        <ValidatedInput
-          className="numeric-input"
-          style={getNumericInputStyle(values.reps)}
-          disabled={disabled}
-          type="number"
-          min={0}
-          value={values.reps ?? ''}
-          whole onValue={(value) => patch({ reps: Number(value) })}
-        />
-      </label>
+      {rangeInput}
     </div>
   );
 }

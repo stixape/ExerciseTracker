@@ -77,6 +77,7 @@ test('loads direct routes and exposes semantic primary navigation', async ({ pag
   await expect(page).toHaveURL(/\/workout$/);
   await expect(page.getByText('Local-first', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Weekly Template', { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Saved on this device|Independent backup needed/)).toHaveCount(0);
 
   await page.goto('/ExerciseTracker/plan');
   await expect(page.getByRole('heading', { name: 'Plan' })).toBeVisible();
@@ -101,7 +102,7 @@ test('the single default appearance has a persistent hide-rest setting', async (
   const hideRestTimes = page.getByRole('checkbox', { name: /Hide rest times/ });
   await expect(hideRestTimes).not.toBeChecked();
   await hideRestTimes.check();
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   await page.reload();
   await expect(page.getByRole('checkbox', { name: /Hide rest times/ })).toBeChecked();
 });
@@ -114,7 +115,7 @@ test('hide rest times goes straight to the next set', async ({ page }) => {
 
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('checkbox', { name: /Hide rest times/ }).check();
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   await page.goto('/ExerciseTracker/workout/day_test');
   await page.getByRole('button', { name: 'Start workout' }).click();
   await page.getByRole('button', { name: 'Complete set' }).click();
@@ -132,7 +133,7 @@ test('used band colours can be reordered and archived without rewriting records'
   const blueHandle = page.getByRole('button', { name: /Reorder Blue/ });
   await blueHandle.dragTo(page.locator('.band-row[data-band-id="band_red"]'));
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
 
   await page.reload();
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
@@ -177,7 +178,7 @@ test('workout preview does not start a session and active entries survive reload
   await page.getByRole('spinbutton', { name: 'Performed weight' }).fill('62.5');
   await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('8');
   await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('8');
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
 
   await page.reload();
   await expect(page.getByRole('spinbutton', { name: 'Performed weight' })).toHaveValue('62.5');
@@ -380,7 +381,7 @@ test('records numeric and text modifiers, stages changes and saves notes immedia
   await expect(page.getByLabel('Notes', { exact: true })).toHaveValue('Keep shoulders down.\nUse a mat.');
   await page.getByLabel('Notes', { exact: true }).fill('Use a mat.\nPause at the top.');
   await page.getByRole('button', { name: 'Save notes' }).click();
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('button', { name: 'Pause' }).click();
   await plan.click();
   await card.locator('summary').click();
@@ -412,15 +413,85 @@ test('records numeric and text modifiers, stages changes and saves notes immedia
   await expect(page.getByRole('button', { name: 'Save workout' })).toBeVisible();
 });
 
-test('automatically exports completed workouts and leaves ordinary edits out of the rotation', async ({ page, context }) => {
+test('shows planned ranges and records single performed reps and seconds', async ({ page }) => {
+  await importWorkout(page, 'Target ranges', [
+    { id: 'range_weighted', name: 'Range Squat', mode: 'weighted_reps', target: { weightKg: 45, reps: 5 } },
+    { id: 'range_timed', name: 'Range Hold', mode: 'timed_hold', target: { seconds: 40 } },
+    { id: 'range_band', name: 'Range Row', mode: 'band_reps', target: { bandColourIds: ['band_red'], reps: 10 } },
+  ]);
+  await expect(page.getByText('45 KG - 1x5', { exact: true })).toBeVisible();
+  await expect(page.getByText('1x40s', { exact: true })).toBeVisible();
+  await expect(page.getByText('Red - 1x10', { exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Plan', exact: true }).click();
+  const weighted = page.locator('.plan-exercise-card').filter({ hasText: 'Range Squat' });
+  const timed = page.locator('.plan-exercise-card').filter({ hasText: 'Range Hold' });
+  const banded = page.locator('.plan-exercise-card').filter({ hasText: 'Range Row' });
+  await weighted.locator('summary').click();
+  const reps = weighted.getByLabel('Repetitions', { exact: true });
+  await reps.fill('3-5');
+  await reps.press('Enter');
+  await reps.fill('5-3');
+  await reps.press('Tab');
+  await expect(reps).toHaveAttribute('aria-invalid', 'true');
+  await timed.locator('summary').click();
+  await timed.getByLabel('Seconds', { exact: true }).fill('20-60s');
+  await banded.locator('summary').click();
+  await banded.getByLabel('Repetitions', { exact: true }).fill('7-10');
+
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByText('45 KG - 1x3-5', { exact: true })).toBeVisible();
+  await expect(page.getByText('1x20-60s', { exact: true })).toBeVisible();
+  await expect(page.getByText('Red - 1x7-10', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('3-5');
+  await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('3');
+  await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('4');
+  await page.locator('.next-target-panel summary').click();
+  await page.getByRole('spinbutton', { name: 'Next target reps' }).fill('3');
+
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await expect(page.getByText('20-60 seconds', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip rest' }).click();
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('20-60s');
+  await expect(page.getByRole('spinbutton', { name: 'Performed seconds' })).toHaveValue('20');
+  await page.getByRole('spinbutton', { name: 'Performed seconds' }).fill('23');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await page.getByRole('button', { name: 'Skip rest' }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('7');
+  await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('8');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await page.getByRole('button', { name: 'Save workout' }).click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await page.getByText('View recorded sets').click();
+  const recorded = page.locator('.recorded-session');
+  await expect(recorded).toContainText('45 kg x 4');
+  await expect(recorded).toContainText('23s');
+  await expect(recorded).toContainText('Red x 8');
+
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByText('45 KG - 1x3', { exact: true })).toBeVisible();
+  await expect(page.getByText('1x20-60s', { exact: true })).toBeVisible();
+  await expect(page.getByText('Red - 1x7-10', { exact: true })).toBeVisible();
+});
+
+test('keeps the folder across reloads and retries rotation after permission loss', async ({ page, context }) => {
   // Use a real Chromium directory handle backed by a disposable test origin.
-  await page.addInitScript(() => Object.defineProperty(window, 'showDirectoryPicker', { value: () => navigator.storage.getDirectory() }));
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showDirectoryPicker', { value: () => navigator.storage.getDirectory() });
+    Object.defineProperty(FileSystemDirectoryHandle.prototype, 'queryPermission', {
+      configurable: true,
+      value: async () => localStorage.getItem('test-folder-denied') ? 'denied' : 'granted',
+    });
+  });
   await importWorkout(page, 'Backup test', [
     { id: 'backup_exercise', name: 'Backup Move', mode: 'timed_hold', target: { seconds: 30 } },
   ]);
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Choose backup folder' }).click();
   await expect(page.getByText(/Folder connected/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Reconnect backup folder' })).toBeVisible();
   const copies = () => page.evaluate(async () => {
     const directory = await navigator.storage.getDirectory();
     const revisions = [];
@@ -436,22 +507,38 @@ test('automatically exports completed workouts and leaves ordinary edits out of 
     return revisions.sort((left, right) => left - right);
   });
   expect(await copies()).toEqual([]);
-  for (let count = 1; count <= 3; count++) {
+  async function saveWorkout() {
     await page.getByRole('link', { name: 'Workout', exact: true }).click();
     await page.getByRole('button', { name: 'Start workout' }).click();
     await page.getByRole('button', { name: 'Complete set' }).click();
     await page.getByRole('button', { name: 'Save workout' }).click();
     await expect(page).toHaveURL(/\/progress$/);
+  }
+  for (let count = 1; count <= 3; count++) {
+    await saveWorkout();
     await expect.poll(copies).toEqual(count === 1 ? [1] : [count - 1, count]);
   }
-  await expect(page.getByText('Workout backup verified.')).toBeVisible();
+  await expect(page.getByText(/Saved on this device|Independent backup needed/)).toHaveCount(0);
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText(/Last verified file: revision/)).toBeVisible();
   await page.getByRole('checkbox', { name: /Hide rest times/ }).check();
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   const secondTab = await context.newPage();
   await secondTab.goto('/ExerciseTracker/workout');
   await expect(secondTab.getByRole('button', { name: 'Start workout' })).toBeVisible();
   expect(await copies()).toEqual([2, 3]);
+  await secondTab.close();
+
+  await page.evaluate(() => localStorage.setItem('test-folder-denied', 'true'));
+  await saveWorkout();
+  const accessWarning = page.getByText('Workout backup pending. Reconnect the backup folder in Settings.');
+  await expect(accessWarning).toBeVisible();
+  expect(await copies()).toEqual([2, 3]);
+  await page.evaluate(() => localStorage.removeItem('test-folder-denied'));
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Reconnect backup folder' }).click();
+  await expect.poll(copies).toEqual([3, 4]);
+  await expect(accessWarning).toHaveCount(0);
 });
 
 test('mobile navigation and the sticky workout action remain inside the viewport', async ({ page }) => {

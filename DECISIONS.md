@@ -56,6 +56,12 @@ Archive bands instead of removing their references from completed snapshots. Exi
 
 Evidence lives in [workout backup code](src/lib/workoutBackups.ts), [schema validation](src/lib/appDataSchema.ts) and the [recovery guide](docs/recovery.md).
 
+## ET-010 · Display planning ranges and actionable backup status
+
+**Accepted, 2026-11-22.** Plan accepts whole-number ranges for reps and seconds. The lower bound prefills the numeric performed field and retains the existing target threshold. An explicit numeric Next time target replaces a range when the workout is saved. The upper bound lives with the planned set and is preserved by the existing JSON v6 format.
+
+The app shows save failures and backup issues that require attention. Settings shows the local revision and latest verified backup.
+
 ## Recording future work
 
 Add a dated entry for a material new decision, include rationale actually discussed and evidence, and explicitly label proposed, deferred, rejected or superseded ideas. Retain experiment locations only when they exist.

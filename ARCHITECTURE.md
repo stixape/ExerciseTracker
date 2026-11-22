@@ -8,7 +8,7 @@ A mobile-first, local-first workout PWA. Users edit weekly plans, log weighted/t
 
 - src/main.tsx mounts React inside BrowserRouter and registers the generated service worker only in production.
 - src/App.tsx contains the main shell and the Workout, Plan, Progress and Settings routes. The Workout landing page previews today's plan or offers to resume. src/features/workout/WorkoutPage.tsx owns active sets, rests and completion review.
-- src/app/TrackerContext.tsx distinguishes ready/empty/recovery startup, queues revision-checked commits, blocks edits during replacement, preserves pending changes on failure, and reports local-save and independent-backup state. Cross-window notifications and resume checks supplement the database's transactional revision guard.
+- src/app/TrackerContext.tsx distinguishes ready/empty/recovery startup, queues revision-checked commits, blocks edits during replacement, preserves pending changes on failure, and shows actionable save and backup alerts. Settings shows the latest verified backup. Cross-window notifications and resume checks supplement the database's transactional revision guard.
 - src/domain/ contains types, default plans, session/workout progression, rest rules, band operations, analytics, validation and export logic.
 - src/lib/offlineDb.ts uses Dexie/IndexedDB schema v7. The revision check, canonical snapshot, recovery checkpoint and completed-workout backup job commit together. A pending job reads the canonical snapshot by ID until a subsequent commit moves that payload into the job. Existing checkpoint, recovery-source and preference tables survive the upgrade.
 - appDataSchema.ts and localData.ts validate and restore versioned data. JSON v6 covers notes, rest overrides and modifiers with a SHA-256 checksum. Versions 1–5 remain restorable, including v5 integrity checks. Incomplete field drafts stay in the editor.
@@ -19,6 +19,8 @@ A mobile-first, local-first workout PWA. Users edit weekly plans, log weighted/t
 Data flows from UI actions through domain transformations into the shared context and validated local snapshot. JSON is the backup/restore path; CSV is an export format. The current settings include hiding rest countdowns and archiving/reordering band colours. Remote restoration is explicit; automatic cross-device merging remains absent.
 
 Each active workout snapshots the exercise rest overrides, notes and modifier definitions. Saving notes updates the matching live plan and active snapshot in one edit. Other modifier targets and results are keyed by field ID, while staged next targets apply only to the matching field and type at workout completion. Session history reads the recorded values and labels from the session snapshot.
+
+Rep and time ranges store an optional upper bound on the planned set and its session snapshot. The numeric lower bound is the default performed value and progression threshold. History and CSV record the single value performed.
 
 ## Build and delivery
 

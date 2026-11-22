@@ -28,6 +28,8 @@ export interface TemplateSet {
   id: string;
   setNumber: number;
   target: SetValues;
+  /** Optional upper end for planned reps or seconds. The numeric target stores the lower end. */
+  rangeMax?: number;
 }
 
 export interface TemplateExercise {

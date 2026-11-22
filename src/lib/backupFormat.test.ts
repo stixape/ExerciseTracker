@@ -43,6 +43,19 @@ describe('portable recovery format', () => {
     const csv = createCsvExport(data.sessions);
     expect(csv).toContain('Grip,Wide,Neutral');
   });
+  it('round trips planned ranges and keeps recorded exports numeric', () => {
+    const data = createDefaultAppData('local-user');
+    const day = data.template.days[0];
+    day.exercises = [day.exercises[0]];
+    day.exercises[0].sets = [{ ...day.exercises[0].sets[0], target: { weightKg: 45, reps: 3 }, rangeMax: 5 }];
+    const session = createSessionFromDay(day);
+    data.sessions = [completeSessionIfDone(completeSet(session, session.sets[0].id, { weightKg: 45, reps: 4 }))];
+    const roundTrip = parseJsonImport(createJsonExport(data), 'local-user');
+    expect(roundTrip).toEqual({ ok: true, data });
+    expect(createCsvExport(data.sessions).split('\n')[1].split(',')[8]).toBe('4');
+    day.exercises[0].sets[0].rangeMax = 2;
+    expect(() => createJsonExport(data)).toThrow('valid workout data');
+  });
   it.each(['data', 'backup', 'checksum'])('rejects altered %s without accepting a replacement', (part) => {
     const envelope = JSON.parse(createJsonExport(createDefaultAppData('local-user')));
     if (part === 'data') envelope.data.sessions.push({});

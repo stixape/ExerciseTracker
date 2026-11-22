@@ -6,7 +6,7 @@ ExerciseTracker works offline. Browser storage is disposable: installation and a
 
 1. Open Settings → Backup and recovery. Download a JSON backup and keep it outside browser storage, for example in Documents. CSV is not a full backup.
 2. Select that saved file with **Verify saved backup**. Download initiation alone is not proof of a saved file. The verified revision and time appear separately from the current local revision.
-3. Where available, choose a backup folder. After **Save workout** succeeds, the app writes that revision as JSON, reads it back and verifies the checksum. The app shows workout backup status separately from the local save. Keep the app open while the file is written.
+3. Where available, choose a backup folder. After **Save workout** succeeds, the app writes that revision as JSON, reads it back and verifies the checksum. **Backup and recovery** shows the latest verified file. An alert appears if the backup needs attention. Keep the app open while the file is written.
 4. Keep another copy off the device if device loss matters. Optional remote backup is described in [sync-strategy.md](sync-strategy.md).
 
 Folder support is feature-detected. If access is lost, reopen the app or reconnect the folder in Settings to retry. During an outage the app keeps the two most recent pending workout revisions. Use the manual JSON download and verification controls on browsers without folder access. The actual Android browser still needs the device checks in the release checklist.
@@ -24,7 +24,7 @@ Version 6 includes per-exercise rest, notes and Other modifiers. Versions 1–5 
 
 ## When saving fails
 
-**Saving** and **Saved on this device** describe local commit state, not backup durability. If a write fails, keep the page open. Export unsaved changes as a rescue JSON file, then retry. A stale window cannot overwrite another window's newer revision; export any pending changes before explicitly reloading saved data. Do not import a backup over an unresolved failed edit: rescue/reload first.
+**Backup and recovery** shows the local revision and the latest verified file. If a local write fails, keep the page open. Export unsaved changes as a rescue JSON file, then retry. A stale window cannot overwrite a newer revision from another window. Export any pending changes before explicitly reloading or restoring data.
 
 Incomplete editor fields stay in their fields and are marked invalid; they do not poison the persisted plan or its JSON backup. Finish those fields before completing a set.
 

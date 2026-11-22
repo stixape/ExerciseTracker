@@ -6,6 +6,7 @@ import { formatDuration } from '../../domain/rest';
 import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet, updateExerciseNotes } from '../../domain/session';
 import type { ActiveRest, BandColour, Modifier, SessionSet, SetValues, WorkoutSession } from '../../domain/types';
 import { changeModifierValue, modifierValue } from '../../domain/modifiers';
+import { formatTargetRange, getRecordedRangeMax } from '../../domain/targetRange';
 import { validateSetValues } from '../../domain/validation';
 import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, stageSetProgression, type PlannedSetProgression } from '../../domain/workoutFlow';
 import { playRestAlarm, primeAlarmAudio } from '../../lib/alarm';
@@ -30,18 +31,20 @@ export function WorkoutPage() {
 
   function updateActual(setId: string, actual: SetValues) {
     saveData((current) => {
-      if (!current.activeWorkout) return current;
+      const workout = current.activeWorkout;
+      if (!workout) return current;
       return {
         ...current,
         activeWorkout: {
-          ...current.activeWorkout,
+          ...workout,
           session: {
-            ...current.activeWorkout.session,
-            sets: current.activeWorkout.session.sets.map((set) => {
+            ...workout.session,
+            sets: workout.session.sets.map((set) => {
               if (set.id !== setId) return set;
               const nextSet = { ...set, actual };
               try {
-                return stageSetProgression(nextSet, set.proposedNextTarget, current.bandColours.map((band) => band.id));
+                return stageSetProgression(nextSet, set.proposedNextTarget, current.bandColours.map((band) => band.id),
+                  getRecordedRangeMax(workout.session, set));
               } catch {
                 return { ...nextSet, proposedNextTarget: undefined };
               }
@@ -54,10 +57,11 @@ export function WorkoutPage() {
 
   function updateProgression(setId: string, progression?: PlannedSetProgression) {
     const set = session?.sets.find((item) => item.id === setId);
-    if (!set) return;
+    if (!session || !set) return;
     let stagedSet: SessionSet;
     try {
-      stagedSet = stageSetProgression(set, progression, data.bandColours.map((band) => band.id));
+      stagedSet = stageSetProgression(set, progression, data.bandColours.map((band) => band.id),
+        getRecordedRangeMax(session, set));
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'That next-time target is not valid.');
       return;
@@ -494,7 +498,8 @@ function RestScreen({
         {nextSet && (
           <>
             <strong>Set {nextSet.setNumber}</strong>
-            <span>{formatSetTarget(nextSet, bandColours, session.snapshot.exercises[nextSet.exerciseIndex]?.modifiers)}</span>
+            <span>{formatSetTarget(nextSet, bandColours, session.snapshot.exercises[nextSet.exerciseIndex]?.modifiers,
+              getRecordedRangeMax(session, nextSet))}</span>
           </>
         )}
       </div>
@@ -560,7 +565,7 @@ function ActiveSetScreen({
 
         <progress className="workout-progress" aria-label="Workout progress" value={completedCount} max={session.sets.length} />
 
-        <TargetSummary set={set} bandColours={bandColours} modifiers={exercise?.modifiers} />
+        <TargetSummary set={set} bandColours={bandColours} modifiers={exercise?.modifiers} rangeMax={getRecordedRangeMax(session, set)} />
         <ActualSetEditor
           set={set}
           bandColours={bandColours}
@@ -660,7 +665,12 @@ function ExercisePicker({
   );
 }
 
-function TargetSummary({ set, bandColours, modifiers }: { set: SessionSet; bandColours: BandColour[]; modifiers?: Modifier[] }) {
+function TargetSummary({ set, bandColours, modifiers, rangeMax }: {
+  set: SessionSet;
+  bandColours: BandColour[];
+  modifiers?: Modifier[];
+  rangeMax?: number;
+}) {
   if (set.mode === 'other') {
     return (
       <section className="target-summary" aria-label="Target">
@@ -673,7 +683,7 @@ function TargetSummary({ set, bandColours, modifiers }: { set: SessionSet; bandC
   if (set.mode === 'timed_hold') {
     return (
       <section className="target-summary" aria-label="Target">
-        <ValueTile label="Target time" value={`${set.target.seconds ?? 0}s`} />
+        <ValueTile label="Target time" value={formatTargetRange(set.target.seconds ?? 0, rangeMax) + 's'} />
       </section>
     );
   }
@@ -682,7 +692,7 @@ function TargetSummary({ set, bandColours, modifiers }: { set: SessionSet; bandC
     return (
       <section className="target-summary two" aria-label="Target">
         <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
-        <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+        <ValueTile label="Target reps" value={formatTargetRange(set.target.reps ?? 0, rangeMax)} />
       </section>
     );
   }
@@ -690,7 +700,7 @@ function TargetSummary({ set, bandColours, modifiers }: { set: SessionSet; bandC
   return (
     <section className="target-summary two" aria-label="Target">
       <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
-      <ValueTile label="Target reps" value={String(set.target.reps ?? 0)} />
+      <ValueTile label="Target reps" value={formatTargetRange(set.target.reps ?? 0, rangeMax)} />
     </section>
   );
 }

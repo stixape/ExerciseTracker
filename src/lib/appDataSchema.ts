@@ -6,12 +6,14 @@ import type {
   Modifier,
   RestEvent,
   SessionSet,
+  SetValues,
   TemplateDay,
   TemplateExercise,
   TemplateSet,
   WorkoutSession,
 } from '../domain/types';
 import { MAX_NOTE_LENGTH, MAX_REST_SECONDS, validModifierValue } from '../domain/modifiers';
+import { rangeMetric } from '../domain/targetRange';
 
 type RecordValue = Record<string, unknown>;
 
@@ -256,7 +258,7 @@ function validateTemplateSet(
   options: AppDataValidationOptions,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
-  return (
+  const baseError = (
     idError(value.id, `${path}.id`) ??
     finiteNumberError(value.setNumber, `${path}.setNumber`, { integer: true, minimum: 1 }) ??
     validateSetValues(value.target, `${path}.target`, mode, knownBandIds, {
@@ -265,6 +267,14 @@ function validateTemplateSet(
       allowLegacySideFields: Boolean(options.allowLegacySideFields),
     })
   );
+  if (baseError || value.rangeMax === undefined) return baseError;
+  const metric = rangeMetric(mode);
+  const minimum = metric && (value.target as SetValues)[metric];
+  if (typeof minimum !== 'number' || !Number.isSafeInteger(minimum) ||
+      typeof value.rangeMax !== 'number' || !Number.isSafeInteger(value.rangeMax) || value.rangeMax <= minimum) {
+    return `${path}.rangeMax must be above its planned reps or seconds.`;
+  }
+  return undefined;
 }
 
 function validateTemplateExercise(

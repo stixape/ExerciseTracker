@@ -1,6 +1,7 @@
 import type { BandColour, Modifier, PlannedSetProgression, SessionSet, WorkoutSession, WorkoutTemplate } from './types';
 import { validatePlannedSetProgression } from './validation';
 import { changeModifierValue, formatModifierValues, modifierValue } from './modifiers';
+import { formatTargetRange, getRecordedRangeMax, rangeMetric } from './targetRange';
 
 export type { PlannedSetProgression } from './types';
 
@@ -28,7 +29,7 @@ export function applySetProgression(
   const errors = validatePlannedSetProgression(set.mode, progression, knownBandColourIds);
   if (errors.length) throw new RangeError(errors.join(' '));
   const nextTarget = progressionForMode(set, progression);
-  if (!progressionChangesTarget(set, nextTarget)) return template;
+  if (!progressionChangesTarget(set, nextTarget, getRecordedRangeMax(session, set))) return template;
   const { modifiers: proposedModifiers, ...standardTarget } = nextTarget;
   const recordedFields = set.mode === 'other' ? session.snapshot.exercises[set.exerciseIndex]?.modifiers : undefined;
 
@@ -59,6 +60,7 @@ export function applySetProgression(
 
               return {
                 ...templateSet,
+                rangeMax: standardTarget.reps !== undefined || standardTarget.seconds !== undefined ? undefined : templateSet.rangeMax,
                 target: {
                   ...templateSet.target,
                   ...standardTarget,
@@ -81,13 +83,14 @@ export function stageSetProgression(
   set: SessionSet,
   progression?: PlannedSetProgression,
   knownBandColourIds?: Iterable<string>,
+  rangeMax?: number,
 ): SessionSet {
   if (!progression || !isSetTargetMet(set)) return withoutProposedTarget(set);
 
   const errors = validatePlannedSetProgression(set.mode, progression, knownBandColourIds);
   if (errors.length) throw new RangeError(errors.join(' '));
   const nextTarget = progressionForMode(set, progression);
-  if (!progressionChangesTarget(set, nextTarget)) return withoutProposedTarget(set);
+  if (!progressionChangesTarget(set, nextTarget, rangeMax)) return withoutProposedTarget(set);
   return {
     ...set,
     proposedNextTarget: {
@@ -111,10 +114,10 @@ export function applySessionProgressions(
   );
 }
 
-export function formatSetTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[]): string {
+export function formatSetTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[], rangeMax?: number): string {
   if (set.mode === 'other') return formatModifierValues(set.target, modifiers) || 'Open targets';
-  if (set.mode === 'timed_hold') return `${set.target.seconds ?? 0} seconds`;
-  const repsLabel = `${set.target.reps ?? 0} reps`;
+  if (set.mode === 'timed_hold') return `${formatTargetRange(set.target.seconds ?? 0, rangeMax)} seconds`;
+  const repsLabel = `${formatTargetRange(set.target.reps ?? 0, rangeMax)} reps`;
   if (set.mode === 'band_reps') return `${formatBandNames(set.target.bandColourIds ?? [], bandColours)} x ${repsLabel}`;
   return `${set.target.weightKg ?? 0} kg x ${repsLabel}`;
 }
@@ -165,7 +168,9 @@ function progressionForMode(set: SessionSet, progression: PlannedSetProgression)
   };
 }
 
-function progressionChangesTarget(set: SessionSet, progression: PlannedSetProgression): boolean {
+function progressionChangesTarget(set: SessionSet, progression: PlannedSetProgression, rangeMax?: number): boolean {
+  const metric = rangeMetric(set.mode);
+  if (rangeMax !== undefined && metric && progression[metric] !== undefined) return true;
   return Object.entries(progression).some(([key, value]) => {
     if (key === 'bandColourIds') return !sameIds(value as string[], set.target.bandColourIds ?? []);
     if (key === 'modifiers') return Object.keys(progression.modifiers ?? {}).length > 0;

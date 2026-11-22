@@ -40,7 +40,6 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [backupError, setBackupError] = useState('');
   const [workoutBackupStatus, setWorkoutBackupStatus] = useState<WorkoutBackupResult>('idle');
-  const [independentlyBacked, setIndependentlyBacked] = useState(false);
   const [backupTick, setBackupTick] = useState(0);
   const reasonRef = useRef<CheckpointReason>('edit');
   const dataRef = useRef<AppData | undefined>(undefined);
@@ -102,26 +101,16 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    async function refreshProtection() {
-      const [file, remote, workout] = await Promise.all([offlineDb.preferences.get('last-file-backup'), offlineDb.preferences.get('last-remote-backup'), offlineDb.preferences.get('last-workout-backup')]);
-      const matches = (value: unknown) => Boolean(value && typeof value === 'object' && 'snapshotId' in value && value.snapshotId === snapshot?.snapshotId);
-      if (!cancelled) setIndependentlyBacked(Boolean(snapshot && (matches(file?.value) || matches(remote?.value) || matches(workout?.value))));
-    }
     const trigger = () => setBackupTick((tick) => tick + 1);
-    const refresh = () => { void refreshProtection().catch(() => undefined); };
-    void refreshProtection().catch(() => undefined);
-    window.addEventListener('file-backup-updated', refresh);
     window.addEventListener('backup-target-changed', trigger);
     window.addEventListener('online', trigger);
     const timer = snapshot ? window.setTimeout(async () => {
       try { if (await backupToRemote(snapshot) && !cancelled) setBackupError(''); }
       catch { if (!cancelled) setBackupError('A remote backup could not be verified. Your local save is intact. Reconnect your remote account in Settings.'); }
-      await refreshProtection().catch(() => undefined);
     }, reasonRef.current === 'set' || reasonRef.current === 'workout' ? 0 : 1_000) : undefined;
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      window.removeEventListener('file-backup-updated', refresh);
       window.removeEventListener('backup-target-changed', trigger);
       window.removeEventListener('online', trigger);
     };
@@ -133,7 +122,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     function run() {
       function accept(result: WorkoutBackupResult) {
-        if (!cancelled && result !== 'idle') setWorkoutBackupStatus(result);
+        if (!cancelled) setWorkoutBackupStatus(result);
       }
       void flushWorkoutBackups(LOCAL_USER_ID).then(accept, () => accept('failed'));
     }
@@ -271,10 +260,10 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   return <TrackerContext.Provider value={{ data, snapshot, status, busy, saveData, replaceData, getBackupJson, retrySave }}>
     <div className="tracker-ready">
       <div className="tracker-status">
-        <div className="save-status" role="status">{status === 'saved' ? 'Saved on this device · revision ' + snapshot?.revision : status === 'saving' ? 'Saving on this device…' : 'Changes are not saved'}</div>
-        {!independentlyBacked && <div className="backup-reminder">Independent backup needed. Keep a verified JSON file outside browser storage; backup controls are in Settings.</div>}
         {backupError && <div className="backup-reminder" role="status">{backupError}</div>}
-        {workoutBackupStatus !== 'idle' && <div className="workout-backup-status" role="status">{workoutBackupMessage(workoutBackupStatus)}</div>}
+        {workoutBackupStatus !== 'idle' && workoutBackupStatus !== 'verified' && (
+          <div className="workout-backup-status" role="status">{workoutBackupMessage(workoutBackupStatus)}</div>
+        )}
         {error && <div className="storage-error-banner" role="alert">{error}
           {status === 'error' && <button type="button" onClick={() => void retrySave()}>Retry save</button>}
           {(status === 'error' || status === 'conflict') && <>
@@ -283,7 +272,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
           </>}
         </div>}
       </div>
-      <fieldset className="app-interaction" disabled={busy || status === 'conflict' || status === 'error'} aria-busy={busy}>{children}</fieldset>
+      <fieldset className="app-interaction" disabled={busy || status === 'conflict' || status === 'error'} aria-busy={busy || status === 'saving'}>{children}</fieldset>
     </div>
   </TrackerContext.Provider>;
 }

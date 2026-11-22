@@ -1,10 +1,12 @@
 # ExerciseTracker project status
 
-Updated 2026-11-22 on codex/workout-redesign from dcd30b5. The working tree and index were clean at the start. Publishing requires the approval recorded in AGENTS.md.
+Updated 2026-11-22 on `codex/workout-plan-ranges`, based on `3155a3b`. This branch began with partial range edits from the earlier interrupted turn. Publishing requires the approval recorded in AGENTS.md.
 
 ## Implemented
 
 - Workout opens directly to Today's plan. The landing panel scrolls its exercise list when needed and keeps the start or resume button in view. Completed session and set totals appear in Progress.
+- Today's summary puts load first and groups consecutive identical sets, for example `45 KG - 3x5`. Plan accepts ranges for reps and seconds. The active workout shows the range and prefills the numeric performed field with the lower bound.
+- Routine save and backup banners are removed. Actionable alerts remain visible and Settings shows the latest verified backup.
 - Plan includes custom rest minutes, multiline notes and numeric or text Other modifiers. Active-workout notes save to the matching plan immediately. Other targets staged during a workout apply on completion, and history retains the recorded labels and values.
 - Canonical IndexedDB schema v7 preserves the revision checks and checkpoints and adds a transactional completed-workout file queue.
 - Ready/empty/recovery startup states; defaults require explicit creation. Original legacy strings, retired table rows and pre-normalisation/pre-replacement records are preserved. Interrupted upgrades roll back atomically and can retry. Canonical saves do not depend on access to obsolete localStorage.
@@ -25,7 +27,13 @@ See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instru
 - The user approved a one-time, non-force push of `a663851` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git`. GitHub confirmed the updated ref. [Pages run 45020887506](https://github.com/stixape/ExerciseTracker/actions/runs/45020887506) passed verification and deployed the update.
 - The [live app](https://stixape.github.io/ExerciseTracker/) served `index-DoFXkkFK.js` and a service worker with cache `exercise-tracker-1c34599430592365`. A fresh Chromium context verified the Workout landing, the Plan rest and Other controls, and starting a workout offline after reloading.
 
-## Verification performed on 2026-11-22
+## Workout range verification on 2026-11-22
+
+- `npm run verify` passed on the pinned Node and npm toolchain, including lint, unit tests, the Pages build, desktop and mobile Chromium, and offline verification.
+- Coverage includes compact summaries, ordered groups of different sets, invalid range drafts, numeric workout records, Next time replacement, and JSON backup restore.
+- A disposable Chromium folder retained access across a page reload. Four saves verified two-file rotation, a visible warning on simulated permission loss, and backlog recovery after reconnecting. This check used the browser's origin-private filesystem to simulate the selected folder. Physical Android folder permissions remain unverified.
+
+## Workout redesign verification on 2026-11-22
 
 - npm run verify passed with Node 24.19.0 and npm 11.17.0. It covered lint, 126 unit tests, the Pages build, 41 Chromium browser tests and offline verification. The desktop run skipped one mobile-only viewport case.
 - Browser coverage includes long plans with large text, resume across days, rest overrides, note editing, Other target changes, three-workout rotation with a synthetic Chromium folder handle, and independent JSON restore after clearing a disposable origin.

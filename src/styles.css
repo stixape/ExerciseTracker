@@ -196,6 +196,11 @@ small {
   min-width: clamp(5.75rem, calc((var(--digits, 2) + 5) * 1ch), 9rem);
 }
 
+.target-range-input {
+  width: 100%;
+  min-width: 0;
+}
+
 .form-message {
   color: var(--danger);
   font-size: 0.9rem;
@@ -312,14 +317,6 @@ small {
 .today-plan > li {
   padding: 0.6rem 0.3rem;
   border-top: 1px solid var(--hero-action-border);
-}
-
-.today-plan ul {
-  margin: 0.3rem 0 0;
-  padding: 0;
-  color: var(--hero-muted);
-  list-style: none;
-  font-size: 0.9rem;
 }
 
 .today-action {
@@ -1938,9 +1935,8 @@ select,
 }
 /* Recovery controls remain outside the disabled editing fieldset. */
 .app-interaction { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
-.save-status, .backup-reminder { padding: .4rem 1rem; background: #e6f1ee; color: #174f48; font-size: .85rem; overflow-wrap: anywhere; }
+.backup-reminder { padding: .4rem 1rem; background: #fff4d7; color: #654c13; font-size: .85rem; overflow-wrap: anywhere; }
 .workout-backup-status { padding: .4rem 1rem; background: var(--surface); color: var(--ink); font-size: .85rem; overflow-wrap: anywhere; }
-.backup-reminder { background: #fff4d7; color: #654c13; }
 .recovery-screen { max-width: 48rem; margin: 2rem auto; padding: 1rem; }
 .backup-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; align-items: center; }
 .backup-controls details { flex-basis: 100%; }

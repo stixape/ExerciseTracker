@@ -112,7 +112,7 @@ test('unfinished editor fields do not poison unrelated saves or backups', async 
   await expect(name).toHaveAttribute('aria-invalid', 'true');
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
   await page.getByRole('checkbox', { name: /Hide rest times/ }).uncheck();
-  await expect(page.locator('.save-status')).toContainText('Saved on this device');
+  await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('link', { name: 'Plan', exact: true }).click();
   await page.locator('details.plan-exercise-card').first().locator('summary').click();
   await expect(page.getByLabel('Exercise 1 name')).toHaveValue(previous);
