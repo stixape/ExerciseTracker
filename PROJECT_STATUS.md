@@ -36,7 +36,8 @@ See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instru
 ### Pages release
 
 - The requested non-force push of `0ad0a3b` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` reached GitHub. [Run 45043946535](https://github.com/stixape/ExerciseTracker/actions/runs/45043946535) skipped deployment because a browser test reloaded the review screen before the final set had finished saving.
-- The test now waits for **Save workout** to become enabled before reloading. Eight repeated desktop and mobile checks passed locally.
+- The rerun for the same commit passed verification and deployed the update. The [live app](https://stixape.github.io/ExerciseTracker/) served `index-iVHK_s05.js` and the worker cache `exercise-tracker-2e56416dd93650db`. A fresh Chromium context verified the compact summary, planning range entry, and starting the ranged workout offline.
+- Local commit `59a615b` makes the browser test wait for **Save workout** to become enabled before reloading. Eight repeated desktop and mobile checks passed locally. The release used the successful rerun of `0ad0a3b`.
 
 ## Workout redesign verification on 2026-11-22
 
