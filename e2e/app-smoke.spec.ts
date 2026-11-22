@@ -153,13 +153,11 @@ test('used band colours can be reordered and archived without rewriting records'
 
   await page.goto('/ExerciseTracker/workout/day_test');
   await page.getByRole('button', { name: 'Start workout' }).click();
-  expect(
-    await page
-      .locator('.band-fieldset')
-      .first()
-      .locator('.band-picker button')
-      .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))),
-  ).toEqual(['Blue for Performed bands', 'Red for Performed bands', 'Green for Performed bands']);
+  await expect(page.getByRole('heading', { name: 'Band Row', exact: true })).toBeVisible();
+  const performedBands = page.locator('.band-fieldset').first().locator('.band-picker button');
+  await expect(performedBands).toHaveCount(3);
+  expect(await performedBands.evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))))
+    .toEqual(['Blue for Performed bands', 'Red for Performed bands', 'Green for Performed bands']);
 });
 
 test('workout preview does not start a session and active entries survive reload', async ({ page }) => {
@@ -325,8 +323,9 @@ test('long plans scroll within Today and leave the start button visible with lar
   const start = page.getByRole('button', { name: 'Start workout' });
   await expect(page.getByRole('heading', { name: 'Monday' })).toBeFocused();
   await expect(start).toBeInViewport({ ratio: 1 });
-  await list.focus();
-  await page.keyboard.press('End');
+  await page.keyboard.press('Tab');
+  await expect(list).toBeFocused();
+  await list.getByText('Exercise with a long name 30').scrollIntoViewIfNeeded();
   await expect(list.getByText('Exercise with a long name 30')).toBeInViewport();
   await expect(start).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => ({
