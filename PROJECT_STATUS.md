@@ -16,12 +16,14 @@ Updated 2026-11-22 on codex/workout-redesign from dcd30b5. The working tree and 
 
 See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instructions](docs/recovery.md), [audit and evidence limits](docs/reliability-audit.md), and [optional remote setup](docs/sync-strategy.md).
 
-## Pages deployment attempts on 2026-11-22
+## Pages deployment on 2026-11-22
 
 - The user approved a one-time, non-force push of `5e46927` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` for https://stixape.github.io/ExerciseTracker/. GitHub confirmed that update. This consumed the approval for that commit.
 - [Pages run 45019588720](https://github.com/stixape/ExerciseTracker/actions/runs/45019588720) stopped at Chromium installation because Playwright 1.59.1 does not support the Ubuntu 26.04 `ubuntu-latest` runner. The deploy job was skipped.
 - The user separately approved a one-time, non-force push of `5dc03ab` to the same repository and branch. GitHub confirmed that update. Chromium installed successfully on `ubuntu-24.04`, then [Pages run 45019934463](https://github.com/stixape/ExerciseTracker/actions/runs/45019934463) and its rerun stopped at the flaky-test gate. GitHub skipped deployment on both attempts.
-- The local follow-up makes the band test wait for the active set before checking order and verifies keyboard focus and scrolling separately in the long-plan test. Sixteen repeated checks passed locally, followed by the full browser suite. The standalone offline check passed after the first local preview timed out.
+- The browser test follow-up makes the band test wait for the active set before checking order and verifies keyboard focus and scrolling separately in the long-plan test. Sixteen repeated checks passed locally, followed by the full browser suite. The standalone offline check passed after the first local preview timed out.
+- The user approved a one-time, non-force push of `a663851` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git`. GitHub confirmed the updated ref. [Pages run 45020887506](https://github.com/stixape/ExerciseTracker/actions/runs/45020887506) passed verification and deployed the update.
+- The [live app](https://stixape.github.io/ExerciseTracker/) served `index-DoFXkkFK.js` and a service worker with cache `exercise-tracker-1c34599430592365`. A fresh Chromium context verified the Workout landing, the Plan rest and Other controls, and starting a workout offline after reloading.
 
 ## Verification performed on 2026-11-22
 
