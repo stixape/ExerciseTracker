@@ -140,7 +140,7 @@ export function detectPlateaus(sessions: WorkoutSession[], appearanceThreshold =
 
   for (const session of sessions.filter((item) => item.completedAt)) {
     const bestForSession = new Map<string, SessionSet>();
-    for (const set of session.sets.filter((item) => item.completedAt && item.mode !== 'other')) {
+    for (const set of session.sets.filter((item) => item.completedAt && item.mode !== 'other' && item.mode !== 'interval')) {
       const key = exerciseKey(set);
       const current = bestForSession.get(key);
       if (!current || scoreSet(set) > scoreSet(current)) bestForSession.set(key, set);

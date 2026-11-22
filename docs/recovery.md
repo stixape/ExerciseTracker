@@ -20,7 +20,7 @@ Automatic workout retention keeps the two newest verified workout files and dele
 3. On **Restore or start ExerciseTracker**, select a JSON backup, review its plan/session counts and confirm **Restore this backup**. File restoration works offline once the shell is cached.
 4. Reopen offline and check the plan, history and active workout. Reconnect the backup folder and verify the new local revision.
 
-Version 6 includes per-exercise rest, notes and Other modifiers. Versions 1–5 remain importable, with checksum verification for v5 and v6. Restore creates a new local revision. Browser memory and schema collection limits still apply. A file that cannot be read or validated leaves the existing data intact.
+Version 7 adds Interval and its saved phase, deadline or paused duration. Versions 1–6 remain importable, with checksum verification for v5–v7. A restored running interval catches up from its saved deadline when the workout is opened. A paused interval keeps its remaining time. Restore creates a new local revision. Browser memory and schema collection limits still apply. A file that cannot be read or validated leaves the existing data intact.
 
 ## When saving fails
 

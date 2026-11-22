@@ -77,6 +77,8 @@ export class ExerciseTrackerDb extends Dexie {
       }
     });
     this.version(7).stores({ workoutBackupJobs: '&snapshotId, [userId+revision]' });
+    // Older clients cannot safely open sessions containing Interval.
+    this.version(8).stores({});
   }
 }
 

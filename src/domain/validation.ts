@@ -1,4 +1,5 @@
 import type { MetricMode, PlannedSetProgression, SetValues } from './types';
+import { MAX_INTERVAL_SECONDS } from './interval';
 
 function isFiniteNonNegative(value: number | undefined): value is number {
   return value !== undefined && Number.isFinite(value) && value >= 0;
@@ -37,6 +38,9 @@ export function validateSetValues(mode: MetricMode, values: SetValues, knownBand
   if (mode === 'timed_hold' && !isWholeNonNegative(values.seconds)) {
     errors.push('Seconds must be a whole number of 0 or higher.');
   }
+  if (mode === 'interval' && (!isWholeNonNegative(values.seconds) || values.seconds < 1 || values.seconds > MAX_INTERVAL_SECONDS)) {
+    errors.push('Interval time must be between one second and 24 hours.');
+  }
 
   if (mode === 'band_reps') {
     errors.push(...validateBandIds(values.bandColourIds, knownBandColourIds));
@@ -52,6 +56,7 @@ export function validatePlannedSetProgression(
   knownBandColourIds?: Iterable<string>,
 ): string[] {
   const errors: string[] = [];
+  if (mode === 'interval') return ['Interval does not support next-time targets.'];
   if (mode === 'other') {
     return Object.keys(progression).every((key) => key === 'modifiers') ? [] : ['Other supports modifier targets.'];
   }

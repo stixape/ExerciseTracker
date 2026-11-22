@@ -2,19 +2,21 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode 
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Check, Clock3, Pause, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
 import { weekdayName } from '../../domain/calendar';
+import { advanceInterval, pauseInterval, resumeInterval, skipIntervalRest, startInterval, type IntervalUpdate } from '../../domain/interval';
 import { formatDuration } from '../../domain/rest';
 import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet, updateExerciseNotes } from '../../domain/session';
-import type { ActiveRest, BandColour, Modifier, SessionSet, SetValues, WorkoutSession } from '../../domain/types';
+import type { ActiveRest, ActiveWorkout, BandColour, Modifier, SessionSet, SetValues, WorkoutSession } from '../../domain/types';
 import { changeModifierValue, modifierValue } from '../../domain/modifiers';
 import { formatTargetRange, getRecordedRangeMax } from '../../domain/targetRange';
 import { validateSetValues } from '../../domain/validation';
 import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, stageSetProgression, type PlannedSetProgression } from '../../domain/workoutFlow';
-import { playRestAlarm, primeAlarmAudio } from '../../lib/alarm';
+import { playIntervalBell, playIntervalFinishAlarm, playRestAlarm, primeAlarmAudio, primeIntervalAudio } from '../../lib/alarm';
 import { formatBandNames, formatSetActual } from '../../lib/workoutFormatting';
 import { useTracker } from '../../app/TrackerContext';
 import { ValidatedInput } from '../../components/ValidatedInput';
 import { ExerciseNotes } from '../../components/ExerciseNotes';
 import { ModifierInput } from '../../components/ModifierInput';
+import { IntervalTimer } from './IntervalTimer';
 
 export function WorkoutPage() {
   const { data, saveData, status } = useTracker();
@@ -22,12 +24,31 @@ export function WorkoutPage() {
   const [finishingSessionId, setFinishingSessionId] = useState<string>();
   const activeWorkout = data.activeWorkout;
   const session = activeWorkout?.session;
+  const interval = activeWorkout?.activeInterval;
+  const intervalSet = session?.sets.find((set) => set.id === interval?.setId);
   const selectedSet = session?.sets.find((set) => set.id === activeWorkout?.selectedSetId && !set.completedAt);
   const currentSet = selectedSet ?? (session ? getCurrentSessionSet(session) : undefined);
   const completedCount = session?.sets.filter((set) => set.completedAt).length ?? 0;
 
   useScreenWakeLock(Boolean(session && !session.completedAt));
 
+  async function updateInterval(update: (workout: ActiveWorkout) => IntervalUpdate) {
+    let cue: IntervalUpdate['cue'];
+    const saved = await saveData((current) => {
+      const workout = current.activeWorkout;
+      if (!workout || workout.session.id !== session?.id || workout.activeInterval !== interval) return current;
+      const next = update(workout);
+      cue = next.cue;
+      return next.workout === workout ? current : { ...current, activeWorkout: next.workout };
+    }, 'set');
+    if (saved && cue === 'bell') void playIntervalBell();
+    if (saved && cue === 'finish') void playIntervalFinishAlarm();
+  }
+
+  function beginInterval(set: SessionSet) {
+    primeIntervalAudio();
+    void updateInterval((workout) => ({ workout: startInterval(workout, set.exerciseId, Date.now()) }));
+  }
 
   function updateActual(setId: string, actual: SetValues) {
     saveData((current) => {
@@ -234,6 +255,28 @@ export function WorkoutPage() {
     );
   }
 
+  if (interval && intervalSet) {
+    return (
+      <section className="focused-workout-screen active-set-screen">
+        <WorkoutControls onRestart={restartWorkout} onDiscard={discardWorkout} disabled={status !== 'saved'} />
+        <IntervalTimer
+          key={interval.setId + interval.phase}
+          interval={interval}
+          set={intervalSet}
+          setCount={session.snapshot.exercises[intervalSet.exerciseIndex].sets.length}
+          ready={status === 'saved'}
+          onDue={(live) => void updateInterval((workout) => advanceInterval(workout, Date.now(), live))}
+          onPause={() => void updateInterval((workout) => ({ workout: pauseInterval(workout, Date.now()) }))}
+          onResume={() => {
+            primeIntervalAudio();
+            void updateInterval((workout) => ({ workout: resumeInterval(workout, Date.now()) }));
+          }}
+          onSkip={() => void updateInterval((workout) => skipIntervalRest(workout, Date.now()))}
+        />
+      </section>
+    );
+  }
+
   if (!session.sets.length) {
     return (
       <EmptyActiveWorkout
@@ -269,7 +312,8 @@ export function WorkoutPage() {
       onActualChange={(actual) => updateActual(currentSet.id, actual)}
       onProgressionChange={(progression) => updateProgression(currentSet.id, progression)}
       onSaveNotes={(notes) => saveData((current) => updateExerciseNotes(current, session.templateDayId, currentSet.exerciseId, notes))}
-      onComplete={() => completeWorkoutSet(currentSet)}
+      onComplete={() => currentSet.mode === 'interval' ? beginInterval(currentSet) : completeWorkoutSet(currentSet)}
+      startingBlocked={currentSet.mode === 'interval' && status !== 'saved'}
       onChooseExercise={chooseExercise}
       onPause={pauseWorkout}
       onDiscard={discardWorkout}
@@ -523,6 +567,7 @@ function ActiveSetScreen({
   onProgressionChange,
   onSaveNotes,
   onComplete,
+  startingBlocked,
   onChooseExercise,
   onPause,
   onDiscard,
@@ -537,6 +582,7 @@ function ActiveSetScreen({
   onProgressionChange: (progression?: PlannedSetProgression) => void;
   onSaveNotes: (notes?: string) => Promise<boolean>;
   onComplete: () => void;
+  startingBlocked: boolean;
   onChooseExercise: (exerciseId: string) => void;
   onPause: () => void;
   onDiscard: () => void;
@@ -566,20 +612,20 @@ function ActiveSetScreen({
         <progress className="workout-progress" aria-label="Workout progress" value={completedCount} max={session.sets.length} />
 
         <TargetSummary set={set} bandColours={bandColours} modifiers={exercise?.modifiers} rangeMax={getRecordedRangeMax(session, set)} />
-        <ActualSetEditor
+        {set.mode !== 'interval' && <ActualSetEditor
           set={set}
           bandColours={bandColours}
           modifiers={exercise?.modifiers}
           progression={set.proposedNextTarget ?? {}}
           onChange={onActualChange}
           onProgressionChange={onProgressionChange}
-        />
+        />}
         <ExerciseNotes notes={exercise?.notes} onSave={onSaveNotes} />
 
         <div className="active-set-actions">
-          <button className="complete-button focused-complete-button" type="button" onClick={onComplete}>
+          <button className="complete-button focused-complete-button" type="button" onClick={onComplete} disabled={startingBlocked}>
             <Check size={18} />
-            Complete set
+            {set.mode === 'interval' ? 'Start interval' : 'Complete set'}
           </button>
           {onUndoLast && (
             <button className="ghost-button focused-exit-button" type="button" onClick={onUndoLast}>
@@ -597,11 +643,13 @@ function WorkoutControls({
   onRestart,
   onDiscard,
   inverse = false,
+  disabled = false,
 }: {
   onPause?: () => void;
   onRestart: () => void;
   onDiscard: () => void;
   inverse?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className={inverse ? 'workout-controls inverse' : 'workout-controls'} aria-label="Workout controls">
@@ -612,11 +660,11 @@ function WorkoutControls({
         </button>
       )}
       <span className="workout-control-spacer" />
-      <button type="button" className="workout-control-button" onClick={onRestart}>
+      <button type="button" className="workout-control-button" onClick={onRestart} disabled={disabled}>
         <RotateCcw size={17} aria-hidden="true" />
         Restart
       </button>
-      <button type="button" className="workout-control-button danger" onClick={onDiscard}>
+      <button type="button" className="workout-control-button danger" onClick={onDiscard} disabled={disabled}>
         <Trash2 size={17} aria-hidden="true" />
         Discard
       </button>
@@ -671,6 +719,13 @@ function TargetSummary({ set, bandColours, modifiers, rangeMax }: {
   modifiers?: Modifier[];
   rangeMax?: number;
 }) {
+  if (set.mode === 'interval') {
+    return (
+      <section className="target-summary" aria-label="Target">
+        <ValueTile label="Time" value={formatDuration(set.target.seconds ?? 0)} />
+      </section>
+    );
+  }
   if (set.mode === 'other') {
     return (
       <section className="target-summary" aria-label="Target">

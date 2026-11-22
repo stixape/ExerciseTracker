@@ -1,6 +1,6 @@
 import { createId } from './ids';
 import type { ActiveRest, AppData, RestEvent, SessionSet, SetValues, TemplateDay, WorkoutSession } from './types';
-import { getNextIncompleteSet, getRestDurationSeconds, isFinalSet } from './rest';
+import { getExerciseRestSeconds, getNextIncompleteSet, isFinalSet } from './rest';
 
 function cloneSetValues(values: SetValues): SetValues {
   return {
@@ -36,7 +36,7 @@ export function createSessionFromDay(day: TemplateDay): WorkoutSession {
   };
 }
 
-export function completeSet(session: WorkoutSession, setId: string, actual: SetValues): WorkoutSession {
+export function completeSet(session: WorkoutSession, setId: string, actual: SetValues, completedAt = new Date().toISOString()): WorkoutSession {
   return {
     ...session,
     sets: session.sets.map((set) =>
@@ -44,7 +44,7 @@ export function completeSet(session: WorkoutSession, setId: string, actual: SetV
         ? {
             ...set,
             actual: cloneSetValues(actual),
-            completedAt: new Date().toISOString(),
+            completedAt,
           }
         : set,
     ),
@@ -60,9 +60,9 @@ export function uncompleteSet(session: WorkoutSession, setId: string): WorkoutSe
   };
 }
 
-export function completeSessionIfDone(session: WorkoutSession): WorkoutSession {
+export function completeSessionIfDone(session: WorkoutSession, completedAt = new Date().toISOString()): WorkoutSession {
   if (session.completedAt || session.sets.some((set) => !set.completedAt)) return session;
-  return { ...session, completedAt: new Date().toISOString() };
+  return { ...session, completedAt };
 }
 
 export function updateExerciseNotes(data: AppData, dayId: string, exerciseId: string, notes?: string): AppData {
@@ -85,8 +85,7 @@ export function createActiveRest(session: WorkoutSession, completedSetId: string
   const completedSet = session.sets.find((set) => set.id === completedSetId);
   if (!completedSet || isFinalSet(session, completedSetId)) return undefined;
 
-  const durationSeconds = session.snapshot.exercises[completedSet.exerciseIndex]?.restSeconds ??
-    getRestDurationSeconds(completedSet.exerciseIndex, true);
+  const durationSeconds = getExerciseRestSeconds(session, completedSet.exerciseIndex);
   if (!durationSeconds) return undefined;
   const now = Date.now();
   const nextSet = getNextIncompleteSet(session, completedSetId) ?? getNextIncompleteSet(session);
@@ -101,7 +100,12 @@ export function createActiveRest(session: WorkoutSession, completedSetId: string
   };
 }
 
-export function logRestEvent(session: WorkoutSession, rest: ActiveRest, skipped: boolean): WorkoutSession {
+export function logRestEvent(
+  session: WorkoutSession,
+  rest: Pick<ActiveRest, 'afterSessionSetId' | 'durationSeconds' | 'startedAt'>,
+  skipped: boolean,
+  endedAt = new Date().toISOString(),
+): WorkoutSession {
   const afterSet = session.sets.find((set) => set.id === rest.afterSessionSetId);
   const restEvent: RestEvent = {
     id: createId('rest'),
@@ -110,7 +114,7 @@ export function logRestEvent(session: WorkoutSession, rest: ActiveRest, skipped:
     setNumber: afterSet?.setNumber ?? 0,
     durationSeconds: rest.durationSeconds,
     startedAt: rest.startedAt,
-    endedAt: new Date().toISOString(),
+    endedAt,
     skipped,
   };
 

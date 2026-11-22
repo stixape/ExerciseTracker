@@ -1,6 +1,6 @@
 # ExerciseTracker project status
 
-Updated 2026-11-22 on `codex/workout-plan-ranges`, based on `3155a3b`. This branch began with partial range edits from the earlier interrupted turn. Publishing requires the approval recorded in AGENTS.md.
+Updated 2026-11-22 on `codex/interval-timer`, based on `35b0a2c`. The base working tree was clean. Publishing requires the approval described in AGENTS.md.
 
 ## Implemented
 
@@ -8,15 +8,22 @@ Updated 2026-11-22 on `codex/workout-plan-ranges`, based on `3155a3b`. This bran
 - Today's summary puts load first and groups consecutive identical sets, for example `45 KG - 3x5`. Plan accepts ranges for reps and seconds. The active workout shows the range and prefills the numeric performed field with the lower bound.
 - Routine save and backup banners are removed. Actionable alerts remain visible and Settings shows the latest verified backup.
 - Plan includes custom rest minutes, multiline notes and numeric or text Other modifiers. Active-workout notes save to the matching plan immediately. Other targets staged during a workout apply on completion, and history retains the recorded labels and values.
-- Canonical IndexedDB schema v7 preserves the revision checks and checkpoints and adds a transactional completed-workout file queue.
+- Interval sets use decimal minutes in Plan and whole seconds in records. The active timer advances automatically with a saved deadline and phase, supports pause, resume and skip rest, and uses the supplied offline bell and usual final alarm. History and CSV include interval seconds.
+- Canonical IndexedDB schema v8 preserves the revision checks, checkpoints and transactional completed-workout file queue. The upgrade keeps the existing tables and prevents older clients from writing interval snapshots.
 - Ready/empty/recovery startup states; defaults require explicit creation. Original legacy strings, retired table rows and pre-normalisation/pre-replacement records are preserved. Interrupted upgrades roll back atomically and can retry. Canonical saves do not depend on access to obsolete localStorage.
 - Exclusive, previewed/confirmed import/reset/restore. Unfinished fields stay outside committed state. Failed saves retain pending valid changes for rescue export and explicit retry; workout-save navigation waits for commitment.
-- Portable JSON v6 with snapshot identity, source revision/time and SHA-256 checks. Imports cover v1–v6, including v5 checksum verification. The optional remote schema accepts v5 and v6.
+- Portable JSON v7 with active interval state, snapshot identity, source revision/time and SHA-256 checks. Imports cover v1–v7, with checksum verification for v5–v7. The checked-in optional remote schema accepts v5–v7.
 - A saved workout produces a verified JSON file when a supported device folder is connected. The folder keeps the newest two verified automatic workout files. Manual and protected copies use their existing recovery paths. If access is unavailable, Settings offers manual downloads and folder reconnection.
 - Optional Supabase authentication and immutable owner/device-stream backup integration, disabled until a dedicated origin is configured and a user opts in and approves uploads. Reset/import/restore pauses uploads and rotates the next stream. Client retries/read-back checks and server migration/policy tests are included; remote versions never automatically replace local data.
 - Historical band values are preserved through archive/restore; recorded session details remain readable after plan changes. Starter datasets no longer share a mutable palette. Compatible dependency security updates and patched Vitest 4.1.12 are locked.
 
 See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instructions](docs/recovery.md), [audit and evidence limits](docs/reliability-audit.md), and [optional remote setup](docs/sync-strategy.md).
+
+## Interval verification on 2026-11-22
+
+- `npm run verify` passed with Node 24.19.0 and npm 11.17.0 in CI mode. Lint and the Pages build passed, along with 146 unit tests and 47 Chromium cases. The mobile-only viewport case skipped on desktop as intended. The local parallel run timed out in mobile Chromium and the one-worker CI run passed.
+- Desktop and mobile Chromium exercised ordered cue requests, interval rest with ordinary rest hidden, both pause states, skip rest, exercise handoff, reload catch-up, duplicate transition signals and recorded seconds in Progress. Unit tests covered zero and default rest, single-set completion, v7 active-state restore, v5/v6 checksums and CSV.
+- The offline verifier loaded and decoded the supplied MP3 with network and the HTTP cache disabled. The built worker precached 13 files. Physical Android audio and screen-lock behavior and the optional pgTAP checks remain pending.
 
 ## Pages deployment on 2026-11-22
 
@@ -59,8 +66,8 @@ See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instru
 
 ## Remaining release boundaries
 
-- Physical Android Edge/Chrome installation, alarms, folder permission lifecycle, device pressure and hosted/offline behaviour still require the manual release checklist. Mobile emulation is not physical-device verification.
-- No Supabase project/credentials or dedicated origin was configured. The 14 checked-in pgTAP policy assertions were prepared but not executed: local Docker/Supabase/Postgres tooling was unavailable. Mocked client tests do not establish live RLS, authentication/email delivery or provider backup operations. Run those checks before enabling the integration.
+- Physical Android Edge/Chrome installation, audible interval cues, screen-lock catch-up, folder permission lifecycle, device pressure and hosted/offline behaviour still require the manual release checklist.
+- No Supabase project/credentials or dedicated origin was configured. The checked-in pgTAP policy assertions were not executed. They require local Supabase/Postgres tooling. Run the SQL and live service checks before enabling the integration.
 - The historical data-loss cause is still unproven; no failed-device database or exact installed release was available. No existing user dataset was opened or altered during development. All destructive drills used synthetic, isolated storage.
 - Independent files protect against browser clearing, not necessarily device loss. Backup runs while the app is open and recovery reaches only the last independently verified copy. Provider-visible optional backup is not end-to-end encrypted.
 - No push destination/ref scope is approved. Follow AGENTS.md before any publishing, origin migration or external provisioning.

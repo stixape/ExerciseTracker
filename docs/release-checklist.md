@@ -29,6 +29,7 @@ Confirm the pull-request verification job passes before merging. On `main`, the 
 - After one online visit, turning off network still reloads the app shell.
 - Starting a workout, completing a set, and waiting/skipping rest keeps the workout usable.
 - Rest alarm plays after prior workout interaction.
+- On physical Android, start a multi-set Interval offline. Check the supplied bell at each work/rest change and the usual alarm at the end of the exercise. Repeat while switching apps and locking the screen. When reopening, check that elapsed phases are recorded once and missed intermediate bells stay silent. Verify that explicit pause freezes the countdown across a lock and reload. Browsers may suspend timers or restrict audio. [Chrome page lifecycle](https://developer.chrome.com/docs/web-platform/page-lifecycle-api) · [Chrome audio policy](https://developer.chrome.com/blog/autoplay)
 - JSON export downloads.
 - A valid JSON export previews and restores only after confirmation. Select downloaded JSON again to verify it.
 - Invalid JSON import shows an error and does not crash.

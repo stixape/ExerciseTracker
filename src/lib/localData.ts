@@ -1,4 +1,4 @@
-import { APP_DATA_EXPORT_VERSION } from '../domain/dataVersion';
+import { APP_DATA_EXPORT_VERSION, isChecksummedBackupVersion } from '../domain/dataVersion';
 import { createDefaultAppData, createDefaultDayForWeekday } from '../domain/sampleData';
 import type {
   ActiveWorkout,
@@ -27,6 +27,7 @@ const JSON_DATA_MIGRATIONS: Readonly<Record<number, JsonDataMigration>> = {
   3: (data) => structuredClone(data),
   4: (data) => structuredClone(data),
   5: (data) => data,
+  6: (data) => data,
 };
 
 type LegacySetValues = SetValues & { leftReps?: number; rightReps?: number };
@@ -233,7 +234,7 @@ export function restoreJsonExport(parsed: unknown, userId: string): JsonImportRe
   }
 
   const sourceVersion = parsed.version as number;
-  if (sourceVersion === 5 || sourceVersion === APP_DATA_EXPORT_VERSION) {
+  if (isChecksummedBackupVersion(sourceVersion)) {
     const backup = parsed.backup;
     if (!isObject(backup) || typeof backup.snapshotId !== 'string' || !backup.snapshotId.trim() || backup.snapshotId.length > 256 ||
       !Number.isSafeInteger(backup.revision) || (backup.revision as number) < 0 || !isValidIsoDateTime(backup.savedAt) ||

@@ -1,11 +1,12 @@
 import type { BandColour, Modifier, SessionSet, TemplateExercise } from '../domain/types';
 import { formatModifierValues } from '../domain/modifiers';
 import { formatTargetRange } from '../domain/targetRange';
+import { formatDuration } from '../domain/rest';
 
 export function formatSetActual(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[]): string {
   if (set.mode === 'other') return formatModifierValues(set.actual, modifiers) || 'Set completed';
   if (set.mode === 'weighted_reps') return `${set.actual.weightKg ?? 0} kg x ${formatActualReps(set)}`;
-  if (set.mode === 'timed_hold') return `${set.actual.seconds ?? 0}s`;
+  if (set.mode === 'timed_hold' || set.mode === 'interval') return `${set.actual.seconds ?? 0}s`;
   return `${formatBandNames(set.actual.bandColourIds ?? [], bandColours)} x ${formatActualReps(set)}`;
 }
 
@@ -18,6 +19,8 @@ export function formatPlannedSets(exercise: TemplateExercise, bands: BandColour[
     let measure: string;
     if (mode === 'other') {
       measure = formatModifierValues(target, exercise.modifiers) || 'Open targets';
+    } else if (mode === 'interval') {
+      measure = formatDuration(target.seconds ?? 0);
     } else if (mode === 'timed_hold') {
       measure = formatTargetRange(target.seconds ?? 0, rangeMax) + 's';
     } else {

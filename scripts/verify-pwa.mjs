@@ -155,6 +155,17 @@ try {
   if (!offlineAssetProbe.cached || !offlineAssetProbe.fetchOk) {
     throw new Error(`The active worker could not serve a precached asset offline: ${JSON.stringify(offlineAssetProbe)}`);
   }
+  const bellDuration = await page.evaluate(async () => {
+    const response = await fetch('/ExerciseTracker/interval-bell.mp3');
+    if (!response.ok) return 0;
+    const audio = new globalThis.AudioContext();
+    try {
+      return (await audio.decodeAudioData(await response.arrayBuffer())).duration;
+    } finally {
+      await audio.close();
+    }
+  });
+  if (!(bellDuration > 0)) throw new Error('The interval bell could not be loaded and decoded offline.');
 
   const offlineNavigation = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
   await page.evaluate(() => {

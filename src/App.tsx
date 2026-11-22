@@ -25,6 +25,7 @@ import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
 import { createSessionFromDay, updateExerciseNotes } from './domain/session';
 import { changeModifierValue, MAX_REST_SECONDS, modifierValue } from './domain/modifiers';
+import { DEFAULT_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS } from './domain/interval';
 import { rangeMetric } from './domain/targetRange';
 import type {
   BandColour,
@@ -339,6 +340,10 @@ function getDefaultReps(exerciseIndex: number): number {
 
 function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandColours: BandColour[], existing: SetValues = {}): SetValues {
   if (mode === 'other') return {};
+  if (mode === 'interval') {
+    const seconds = existing.seconds ?? DEFAULT_INTERVAL_SECONDS;
+    return { seconds: seconds > 0 && seconds <= MAX_INTERVAL_SECONDS ? seconds : DEFAULT_INTERVAL_SECONDS };
+  }
   const reps = existing.reps ?? getDefaultReps(exerciseIndex);
 
   if (mode === 'weighted_reps') {
@@ -445,7 +450,7 @@ function PlanExerciseEditor({
         </label>
 
         <div className="segmented-control" role="group" aria-label={`Metric for ${exercise.name}`}>
-          {(['weighted_reps', 'band_reps', 'timed_hold', 'other'] as const).map((mode) => (
+          {(['weighted_reps', 'band_reps', 'timed_hold', 'interval', 'other'] as const).map((mode) => (
             <button key={mode} type="button" className={exercise.mode === mode ? 'active' : ''}
               aria-pressed={exercise.mode === mode} onClick={() => changeMode(mode)}>
               {formatModeLabel(mode)}
@@ -572,6 +577,17 @@ function SetValueEditor({
       <ModifierInput key={field.id} field={field} label={`Target ${field.label}`} value={modifierValue(values.modifiers, field.id)}
         onChange={(value) => patch({ modifiers: changeModifierValue(values.modifiers, field.id, value) })} />
     ))}</div>;
+  }
+
+  if (mode === 'interval') {
+    return (
+      <label className="compact-field">
+        Time (minutes)
+        <ValidatedInput type="number" inputMode="decimal" min={0.5 / 60} max={MAX_INTERVAL_SECONDS / 60} step="any"
+          value={Number(((values.seconds ?? DEFAULT_INTERVAL_SECONDS) / 60).toFixed(4))}
+          commitOnBlur onValue={(value) => patch({ seconds: Math.round(Number(value) * 60) })} />
+      </label>
+    );
   }
 
   const metric = mode === 'timed_hold' ? 'seconds' : 'reps';
@@ -722,7 +738,7 @@ function ProgressPage() {
               onClick={() => setSelectedExerciseId(summary.exercise.id)}
             >
               <strong>{summary.exercise.name}</strong>
-              <span>{summary.personalBests[0] ?? 'No PB yet'}</span>
+              {summary.exercise.mode !== 'interval' && <span>{summary.personalBests[0] ?? 'No PB yet'}</span>}
               <small>
                 {summary.completedSets.length} completed sets
                 {summary.plateau ? ' - Plateau flagged' : ''}
@@ -742,31 +758,33 @@ function ProgressPage() {
             <span className="summary-pill">{formatModeLabel(selectedSummary.exercise.mode)}</span>
           </div>
 
-          <div className="progress-detail-grid">
-            <div className="progress-panel">
-              <h3>Personal bests</h3>
-              {selectedSummary.personalBests.length ? (
-                <div className="result-list compact">
-                  {selectedSummary.personalBests.map((best) => (
-                    <div className="result-row" key={best}>
-                      <span>{best}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState title="No PB yet" text="Complete this exercise in a finished workout to create a baseline." />
-              )}
-            </div>
+          {selectedSummary.exercise.mode !== 'interval' && (
+            <div className="progress-detail-grid">
+              <div className="progress-panel">
+                <h3>Personal bests</h3>
+                {selectedSummary.personalBests.length ? (
+                  <div className="result-list compact">
+                    {selectedSummary.personalBests.map((best) => (
+                      <div className="result-row" key={best}>
+                        <span>{best}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState title="No PB yet" text="Complete this exercise in a finished workout to create a baseline." />
+                )}
+              </div>
 
-            <div className={selectedSummary.plateau ? 'progress-panel warning-panel' : 'progress-panel'}>
-              <h3>Plateau</h3>
-              {selectedSummary.plateau ? (
-                <p>{selectedSummary.plateau}</p>
-              ) : (
-                <p className="muted-text">No plateau detected for this exercise.</p>
-              )}
+              <div className={selectedSummary.plateau ? 'progress-panel warning-panel' : 'progress-panel'}>
+                <h3>Plateau</h3>
+                {selectedSummary.plateau ? (
+                  <p>{selectedSummary.plateau}</p>
+                ) : (
+                  <p className="muted-text">No plateau detected for this exercise.</p>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="history-list">
             <h3>Weight over time</h3>
@@ -951,7 +969,7 @@ function setMatchesExercise(set: SessionSet, exercise: TemplateExercise): boolea
 }
 
 function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours: BandColour[]): string[] {
-  if (!sets.length || mode === 'other') return [];
+  if (!sets.length || mode === 'other' || mode === 'interval') return [];
 
   if (mode === 'weighted_reps') {
     const heaviest = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) - (a.actual.weightKg ?? 0))[0];
@@ -975,6 +993,7 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
 function formatModeLabel(mode: MetricMode): string {
   if (mode === 'weighted_reps') return 'Weight';
   if (mode === 'timed_hold') return 'Time';
+  if (mode === 'interval') return 'Interval';
   if (mode === 'other') return 'Other';
   return 'Bands';
 }

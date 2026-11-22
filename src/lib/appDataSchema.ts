@@ -14,6 +14,8 @@ import type {
 } from '../domain/types';
 import { MAX_NOTE_LENGTH, MAX_REST_SECONDS, validModifierValue } from '../domain/modifiers';
 import { rangeMetric } from '../domain/targetRange';
+import { getIntervalSet, MAX_INTERVAL_SECONDS } from '../domain/interval';
+import { getExerciseRestSeconds } from '../domain/rest';
 
 type RecordValue = Record<string, unknown>;
 
@@ -29,7 +31,7 @@ export interface AppDataValidationOptions {
 export type AppDataValidationResult = { ok: true; data: AppData } | { ok: false; error: string };
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
-const METRIC_MODES = new Set<MetricMode>(['weighted_reps', 'timed_hold', 'band_reps', 'other']);
+const METRIC_MODES = new Set<MetricMode>(['weighted_reps', 'timed_hold', 'band_reps', 'interval', 'other']);
 const MAX_SESSIONS = 100_000;
 
 function isRecord(value: unknown): value is RecordValue {
@@ -164,7 +166,7 @@ function validateSetValues(
     if (value.reps === undefined && !(options.target && options.allowMissingTargetReps)) {
       return `${path}.reps is required for a weighted exercise.`;
     }
-  } else if (mode === 'timed_hold') {
+  } else if (mode === 'timed_hold' || mode === 'interval') {
     if (
       value.weightKg !== undefined ||
       value.reps !== undefined ||
@@ -175,6 +177,9 @@ function validateSetValues(
       return `${path} contains values that are not valid for a timed exercise.`;
     }
     if (value.seconds === undefined) return `${path}.seconds is required for a timed exercise.`;
+    if (mode === 'interval') {
+      return finiteNumberError(value.seconds, `${path}.seconds`, { integer: true, minimum: 1, maximum: MAX_INTERVAL_SECONDS });
+    }
   } else {
     if (value.weightKg !== undefined || value.seconds !== undefined) {
       return `${path} contains values that are not valid for a band exercise.`;
@@ -195,6 +200,7 @@ function validateProgression(
   knownBandIds: ReadonlySet<string>,
   allowLegacySideFields: boolean,
 ): string | undefined {
+  if (mode === 'interval') return `${path} is unavailable for Interval.`;
   if (!isRecord(value)) return `${path} must be an object.`;
   if (mode === 'other') {
     return Object.keys(value).length === 1 && isRecord(value.modifiers) && Object.keys(value.modifiers).length > 0
@@ -297,7 +303,7 @@ function validateTemplateExercise(
     validateModifierDefinitions(value.modifiers, value.mode as MetricMode, `${path}.modifiers`) ??
     arrayError(value.sets, `${path}.sets`, 100);
   if (baseError) return baseError;
-  if (value.mode === 'timed_hold' && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
+  if ((value.mode === 'timed_hold' || value.mode === 'interval') && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
 
   const sets = value.sets as unknown[];
   if (!sets.length) return `${path}.sets must contain at least one set.`;
@@ -432,7 +438,7 @@ function validateSessionSet(
     (!METRIC_MODES.has(value.mode as MetricMode) ? `${path}.mode is not a supported exercise mode.` : undefined) ??
     optionalBooleanError(value.tracksSides, `${path}.tracksSides`);
   if (baseError) return baseError;
-  if (value.mode === 'timed_hold' && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
+  if ((value.mode === 'timed_hold' || value.mode === 'interval') && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
 
   const targetError = validateSetValues(value.target, `${path}.target`, value.mode as MetricMode, knownBandIds, {
     target: true,
@@ -610,6 +616,11 @@ function validateActiveWorkout(
     const restError = validateActiveRest(value.activeRest, `${path}.activeRest`, session);
     if (restError) return restError;
   }
+  if (value.activeInterval !== undefined) {
+    if (value.activeRest !== undefined || session.completedAt) return `${path}.activeInterval conflicts with the workout state.`;
+    const intervalError = validateActiveInterval(value.activeInterval, `${path}.activeInterval`, session);
+    if (intervalError) return intervalError;
+  }
   if (value.selectedExerciseId !== undefined) {
     const selectedError = idError(value.selectedExerciseId, `${path}.selectedExerciseId`);
     if (selectedError) return selectedError;
@@ -624,6 +635,36 @@ function validateActiveWorkout(
       return `${path}.selectedSetId does not belong to selectedExerciseId.`;
     }
   }
+  return undefined;
+}
+
+function validateActiveInterval(value: unknown, path: string, session: WorkoutSession): string | undefined {
+  if (!isRecord(value)) return `${path} must be an object.`;
+  if (value.phase !== 'work' && value.phase !== 'rest') return `${path}.phase must be work or rest.`;
+  const set = session.sets.find((item) => item.id === value.setId && item.mode === 'interval');
+  if (!set) return `${path}.setId must reference an interval set in the session.`;
+  const startError = isoDateError(value.startedAt, `${path}.startedAt`);
+  if (startError) return startError;
+  const startedAt = Date.parse(value.startedAt as string);
+  if (startedAt < Date.parse(session.startedAt)) return `${path} starts before its workout.`;
+
+  const next = getIntervalSet(session, set.exerciseId);
+  let phaseSeconds = set.target.seconds!;
+  if (value.phase === 'work') {
+    if (next?.id !== set.id) return `${path} must time the next incomplete interval set.`;
+  } else {
+    phaseSeconds = getExerciseRestSeconds(session, set.exerciseIndex);
+    if (!set.completedAt || !next || !phaseSeconds || startedAt < Date.parse(set.completedAt) ||
+      session.restEvents.some((event) => event.afterSessionSetId === set.id)) return `${path} must time an outstanding interval rest.`;
+  }
+
+  if (value.endsAt === undefined) {
+    return finiteNumberError(value.remainingMs, `${path}.remainingMs`, { integer: true, minimum: 1, maximum: phaseSeconds * 1000 });
+  }
+  if (value.remainingMs !== undefined) return `${path} cannot be paused and running at the same time.`;
+  const endError = isoDateError(value.endsAt, `${path}.endsAt`);
+  if (endError) return endError;
+  if (Date.parse(value.endsAt as string) <= startedAt) return `${path}.endsAt must follow its start.`;
   return undefined;
 }
 

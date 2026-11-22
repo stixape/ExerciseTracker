@@ -18,13 +18,13 @@ describe('portable recovery format', () => {
     expect(createJsonExport(data, identity)).toBe(createJsonExport(data, identity));
     expect(canonicalJson({ z: 1, a: 2 })).toBe(canonicalJson({ a: 2, z: 1 }));
   });
-  it('verifies the original v5 checksum and rejects a relabelled envelope', async () => {
+  it.each([5, 6])('verifies the original v%i checksum and rejects a relabelled envelope', async (version) => {
     const data = createDefaultAppData('local-user');
     const backup = { snapshotId: 'snapshot_v5', revision: 7, savedAt: '2026-10-26T10:00:00.000Z' };
-    const envelope = { version: 5, data, backup, checksum: backupChecksum(data, backup, 5) };
+    const envelope = { version, data, backup, checksum: backupChecksum(data, backup, version) };
     expect(parseJsonImport(JSON.stringify(envelope), 'local-user')).toEqual({ ok: true, data });
     await expect(verifyBackupFile(JSON.stringify(envelope))).resolves.toMatchObject(backup);
-    expect(parseJsonImport(JSON.stringify({ ...envelope, version: 6 }), 'local-user').ok).toBe(false);
+    expect(parseJsonImport(JSON.stringify({ ...envelope, version: 7 }), 'local-user').ok).toBe(false);
   });
   it('round trips notes and modifiers with recorded definitions, and includes targets and results in CSV', () => {
     const data = createDefaultAppData('local-user');

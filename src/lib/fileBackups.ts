@@ -1,6 +1,6 @@
 import { createJsonExport } from '../domain/export';
 import { createId } from '../domain/ids';
-import { APP_DATA_EXPORT_VERSION } from '../domain/dataVersion';
+import { isChecksummedBackupVersion } from '../domain/dataVersion';
 import { checksum } from './backupFormat';
 import { restoreJsonExport } from './localData';
 import { offlineDb, retainedCheckpointIds, type AppSnapshot } from './offlineDb';
@@ -47,7 +47,7 @@ export async function verifyBackupFile(raw: string, expected?: AppSnapshot): Pro
   const result = restoreJsonExport(parsed, expected?.userId ?? 'local-user');
   if (!result.ok) throw new Error('The backup file could not be verified.');
   const envelope = parsed as { version: number; backup?: { snapshotId: string; revision: number; savedAt: string } };
-  if ((envelope.version !== 5 && envelope.version !== APP_DATA_EXPORT_VERSION) || !envelope.backup) throw new Error('This older backup can be restored, but cannot identify a current saved revision.');
+  if (!isChecksummedBackupVersion(envelope.version) || !envelope.backup) throw new Error('This older backup can be restored, but cannot identify a current saved revision.');
   if (expected && (envelope.backup.snapshotId !== expected.snapshotId || envelope.backup.revision !== expected.revision ||
     envelope.backup.savedAt !== expected.updatedAt || checksum(result.data) !== expected.checksum)) throw new Error('The file does not match the saved revision.');
   return { ...envelope.backup, verifiedAt: new Date().toISOString() };

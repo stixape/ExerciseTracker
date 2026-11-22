@@ -5,6 +5,10 @@ export function getRestDurationSeconds(exerciseIndex: number, hasNextSet: boolea
   return exerciseIndex === 0 ? 180 : 120;
 }
 
+export function getExerciseRestSeconds(session: WorkoutSession, exerciseIndex: number): number {
+  return session.snapshot.exercises[exerciseIndex]?.restSeconds ?? getRestDurationSeconds(exerciseIndex, true);
+}
+
 export function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(Math.max(totalSeconds, 0) / 60);
   const seconds = Math.max(totalSeconds, 0) % 60;

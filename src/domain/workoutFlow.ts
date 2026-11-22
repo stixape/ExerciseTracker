@@ -2,6 +2,7 @@ import type { BandColour, Modifier, PlannedSetProgression, SessionSet, WorkoutSe
 import { validatePlannedSetProgression } from './validation';
 import { changeModifierValue, formatModifierValues, modifierValue } from './modifiers';
 import { formatTargetRange, getRecordedRangeMax, rangeMetric } from './targetRange';
+import { formatDuration } from './rest';
 
 export type { PlannedSetProgression } from './types';
 
@@ -116,6 +117,7 @@ export function applySessionProgressions(
 
 export function formatSetTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[], rangeMax?: number): string {
   if (set.mode === 'other') return formatModifierValues(set.target, modifiers) || 'Open targets';
+  if (set.mode === 'interval') return formatDuration(set.target.seconds ?? 0);
   if (set.mode === 'timed_hold') return `${formatTargetRange(set.target.seconds ?? 0, rangeMax)} seconds`;
   const repsLabel = `${formatTargetRange(set.target.reps ?? 0, rangeMax)} reps`;
   if (set.mode === 'band_reps') return `${formatBandNames(set.target.bandColourIds ?? [], bandColours)} x ${repsLabel}`;

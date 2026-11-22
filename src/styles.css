@@ -530,8 +530,8 @@ small {
 .day-tabs,
 .segmented-control {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  overflow-x: auto;
   padding-bottom: 0.1rem;
 }
 
@@ -1525,6 +1525,25 @@ select,
 .active-set-screen,
 .summary-screen {
   background: var(--page-bg);
+}
+
+.interval-panel {
+  text-align: center;
+  justify-items: center;
+  padding-block: clamp(1.5rem, 6vh, 3rem);
+}
+
+.interval-countdown {
+  font-size: clamp(3rem, 15vw, 7rem);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.interval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
 }
 
 .workout-controls {

@@ -1,4 +1,4 @@
-export type MetricMode = 'weighted_reps' | 'timed_hold' | 'band_reps' | 'other';
+export type MetricMode = 'weighted_reps' | 'timed_hold' | 'band_reps' | 'interval' | 'other';
 
 export interface Modifier {
   id: string;
@@ -99,6 +99,16 @@ export interface ActiveRest {
   completed: boolean;
 }
 
+export type ActiveInterval = {
+  /** The running work set, or the completed set preceding a rest. */
+  setId: string;
+  phase: 'work' | 'rest';
+  startedAt: string;
+} & (
+  { endsAt: string; remainingMs?: never } |
+  { endsAt?: never; remainingMs: number }
+);
+
 export interface WorkoutSession {
   id: string;
   templateDayId: string;
@@ -113,6 +123,7 @@ export interface WorkoutSession {
 export interface ActiveWorkout {
   session: WorkoutSession;
   activeRest?: ActiveRest;
+  activeInterval?: ActiveInterval;
   selectedExerciseId?: string;
   selectedSetId?: string;
 }

@@ -3,8 +3,10 @@ import { expect, test, type Page } from '@playwright/test';
 type ExerciseFixture = {
   id: string;
   name: string;
-  mode: 'weighted_reps' | 'timed_hold' | 'band_reps';
+  mode: 'weighted_reps' | 'timed_hold' | 'band_reps' | 'interval';
   target: { weightKg?: number; reps?: number; seconds?: number; bandColourIds?: string[] };
+  setCount?: number;
+  restSeconds?: number;
 };
 
 const bands = [
@@ -20,8 +22,14 @@ async function openApp(page: Page) {
   await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
 }
 
-async function importWorkout(page: Page, label: string, exercises: ExerciseFixture[]) {
-  await page.clock.setFixedTime(new Date('2026-11-23T10:00:00'));
+async function importWorkout(page: Page, label: string, exercises: ExerciseFixture[], options?: { hideRestTimes?: boolean; runningClock?: boolean }) {
+  const monday = new Date('2026-11-23T10:00:00');
+  if (options?.runningClock) {
+    await page.clock.install({ time: monday });
+    await page.clock.pauseAt(new Date(monday.getTime() + 1000));
+  } else {
+    await page.clock.setFixedTime(monday);
+  }
   await openApp(page);
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByLabel('Import JSON export').setInputFiles({
@@ -45,20 +53,19 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
                   id: exercise.id,
                   name: exercise.name,
                   mode: exercise.mode,
-                  sets: [
-                    {
-                      id: `template_set_${exerciseIndex + 1}`,
-                      setNumber: 1,
-                      target: exercise.target,
-                    },
-                  ],
+                  restSeconds: exercise.restSeconds,
+                  sets: Array.from({ length: exercise.setCount ?? 1 }, (_, index) => ({
+                    id: `template_set_${exerciseIndex + 1}_${index + 1}`,
+                    setNumber: index + 1,
+                    target: exercise.target,
+                  })),
                 })),
               },
             ],
           },
           bandColours: bands,
           sessions: [],
-          settings: { hideRestTimes: false },
+          settings: { hideRestTimes: options?.hideRestTimes ?? false },
         },
       }),
     ),
@@ -71,6 +78,122 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
 function acceptNextDialog(page: Page) {
   page.once('dialog', (dialog) => dialog.accept());
 }
+
+async function trackIntervalAudio(page: Page) {
+  await page.addInitScript(() => {
+    const audioWindow = window as Window & { intervalCues: string[] };
+    audioWindow.intervalCues = [];
+    class TestAudioContext {
+      state = 'running';
+      destination = {};
+      async decodeAudioData(bytes: ArrayBuffer) {
+        // MP3 frame sync distinguishes the supplied bell from the RIFF workout alarm.
+        return new Uint8Array(bytes)[0] === 0xff ? 'bell' : 'finish';
+      }
+      createBufferSource() {
+        return {
+          buffer: '',
+          connect() {},
+          stop() {},
+          start() { audioWindow.intervalCues.push(this.buffer); },
+        };
+      }
+    }
+    Object.defineProperty(window, 'AudioContext', { value: TestAudioContext });
+  });
+  return () => page.evaluate(() => (window as Window & { intervalCues?: string[] }).intervalCues);
+}
+
+test('interval work and rest run with ordered cues, pause, resume and skip', async ({ page }) => {
+  const cues = await trackIntervalAudio(page);
+  await importWorkout(page, 'Circuit day', [
+    { id: 'circuit', name: 'Circuit', mode: 'interval', target: { seconds: 3 }, setCount: 3, restSeconds: 4 },
+    { id: 'next', name: 'Next exercise', mode: 'weighted_reps', target: { weightKg: 10, reps: 5 } },
+  ], { runningClock: true, hideRestTimes: true });
+  await expect(page.getByText('3x0:03')).toBeVisible();
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await page.getByRole('button', { name: 'Start interval' }).click();
+
+  const timer = page.getByRole('timer');
+  const panel = page.getByRole('article', { name: 'Interval timer' });
+  const pause = panel.getByRole('button', { name: 'Pause interval' });
+  const resume = panel.getByRole('button', { name: 'Resume interval' });
+  const skip = panel.getByRole('button', { name: 'Skip rest' });
+  await expect(pause).toBeEnabled();
+  await expect(timer).toHaveText('0:03');
+  await page.clock.runFor(1000);
+  await pause.click();
+  await expect(resume).toBeEnabled();
+  await page.clock.runFor(10_000);
+  await expect(timer).toHaveText('0:02');
+  await resume.click();
+  await expect(pause).toBeEnabled();
+  await page.clock.runFor(2000);
+  await expect(skip).toBeEnabled();
+  await expect(timer).toHaveText('0:04');
+  await expect.poll(cues).toEqual(['bell']);
+  await page.clock.runFor(4000);
+  await expect(panel.getByText('Set 2 of 3')).toBeVisible();
+  await expect(pause).toBeEnabled();
+  await expect.poll(cues).toEqual(['bell', 'bell']);
+  await page.clock.runFor(3000);
+  await expect(skip).toBeEnabled();
+  await page.clock.runFor(1000);
+  await pause.click();
+  await expect(resume).toBeEnabled();
+  await page.clock.runFor(10_000);
+  await expect(timer).toHaveText('0:03');
+  await skip.click();
+  await expect(panel.getByText('Set 3 of 3')).toBeVisible();
+  await expect(pause).toBeEnabled();
+  await expect.poll(cues).toEqual(['bell', 'bell', 'bell', 'bell']);
+  await page.clock.runFor(3000);
+  await expect(page.getByRole('heading', { name: 'Next exercise' })).toBeVisible();
+  await expect.poll(cues).toEqual(['bell', 'bell', 'bell', 'bell', 'finish']);
+});
+
+test('interval reload catches up once, then a saved workout shows recorded seconds', async ({ page }) => {
+  const cues = await trackIntervalAudio(page);
+  await importWorkout(page, 'Circuit restore', [
+    { id: 'circuit', name: 'Circuit', mode: 'interval', target: { seconds: 3 }, setCount: 2, restSeconds: 4 },
+  ], { runningClock: true });
+  await page.getByRole('link', { name: 'Plan' }).click();
+  const card = page.locator('details.plan-exercise-card').first();
+  await card.locator('summary').click();
+  const times = card.getByRole('spinbutton', { name: 'Time (minutes)', exact: true });
+  await expect(times).toHaveCount(2);
+  await card.getByRole('button', { name: 'Add set' }).click();
+  await expect(times.nth(2)).toHaveValue('1');
+  await times.nth(2).fill('0.075');
+  await times.nth(2).press('Enter');
+  await expect(times.nth(2)).toHaveValue('0.0833');
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByText('1x0:05')).toBeVisible();
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await page.getByRole('button', { name: 'Start interval' }).click();
+  await expect(page.getByRole('button', { name: 'Pause interval' })).toBeEnabled();
+  await page.clock.setSystemTime(new Date('2026-11-23T10:00:45'));
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Pause interval' })).toBeEnabled();
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('pageshow'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.runFor(50);
+  const save = page.getByRole('button', { name: 'Save workout' });
+  await expect(save).toBeEnabled();
+  await expect.poll(cues).toEqual(['finish']);
+  await page.reload();
+  await expect(save).toBeEnabled();
+  await expect.poll(cues).toEqual([]);
+  await save.click();
+  await expect(page.getByRole('heading', { name: 'Session history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Circuit 3 completed sets' })).toBeVisible();
+  await expect(page.getByText('3s | 3s | 5s', { exact: true })).toBeVisible();
+  await page.getByText('View recorded sets', { exact: true }).click();
+  await expect(page.getByText('Set 3: 5s', { exact: true })).toBeVisible();
+});
 
 test('loads direct routes and exposes semantic primary navigation', async ({ page }) => {
   await openApp(page);
@@ -302,7 +425,7 @@ test('plan editors are collapsed, labelled, and expose selected state', async ({
   await firstCard.locator('summary').click();
   await expect(firstCard.getByLabel('Exercise 1 name')).toBeVisible();
   await expect(firstCard.getByRole('button', { name: 'Weight' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(firstCard.getByRole('group', { name: /Metric for/ }).getByRole('button')).toHaveText(['Weight', 'Bands', 'Time', 'Other']);
+  await expect(firstCard.getByRole('group', { name: /Metric for/ }).getByRole('button')).toHaveText(['Weight', 'Bands', 'Time', 'Interval', 'Other']);
   await expect(firstCard.getByLabel('KG').first()).toBeVisible();
   await expect(firstCard.getByLabel('Repetitions').first()).toBeVisible();
   await expect(page.getByLabel('Day name')).toHaveCount(0);

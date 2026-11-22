@@ -5,9 +5,10 @@ type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'> &
   onValue: (value: string) => void;
   optional?: boolean;
   whole?: boolean;
+  commitOnBlur?: boolean;
 };
 /** Incomplete text belongs to the field, never to the canonical workout state. */
-export function ValidatedInput({ value, onValue, optional = false, whole = false, ...props }: Props) {
+export function ValidatedInput({ value, onValue, optional = false, whole = false, commitOnBlur = false, onBlur, onKeyDown, ...props }: Props) {
   const [draft, setDraft] = useState(String(value ?? ''));
   const [previous, setPrevious] = useState(value);
   const [badInput, setBadInput] = useState(false);
@@ -21,12 +22,23 @@ export function ValidatedInput({ value, onValue, optional = false, whole = false
       number <= Number(props.max ?? Infinity) && (!whole || Number.isInteger(number));
   }
   const valid = isValid(draft) && !badInput;
-  return <input {...props} value={draft} aria-invalid={!valid} required={!optional} onChange={(event) => {
+  return <input {...props} value={draft} aria-invalid={!valid} required={!optional}
+    onBlur={(event) => {
+      if (commitOnBlur && valid && draft !== String(value ?? '')) {
+        onValue(draft);
+        setDraft(String(value ?? ''));
+      }
+      onBlur?.(event);
+    }}
+    onKeyDown={(event) => {
+      if (commitOnBlur && event.key === 'Enter') event.currentTarget.blur();
+      onKeyDown?.(event);
+    }} onChange={(event) => {
     const next = event.target.value;
     setDraft(next);
     setBadInput(event.target.validity.badInput);
     const acceptable = isValid(next) && !event.target.validity.badInput;
     event.target.setCustomValidity(acceptable ? '' : 'Enter a valid value. This unfinished edit has not been saved.');
-    if (acceptable) onValue(next);
+    if (acceptable && !commitOnBlur) onValue(next);
   }} />;
 }

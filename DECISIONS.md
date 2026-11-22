@@ -60,6 +60,10 @@ Evidence lives in [workout backup code](src/lib/workoutBackups.ts), [schema vali
 
 **Accepted, 2026-11-22.** Plan accepts whole-number ranges for reps and seconds. The lower bound prefills the numeric performed field and retains the existing target threshold. An explicit numeric Next time target replaces a range when the workout is saved. The upper bound lives with the planned set and is preserved by the existing JSON v6 format.
 
+## ET-011 · Save Interval phases with the active workout
+
+**Accepted, 2026-11-22.** Interval uses absolute deadlines across refreshes and device interruptions. Explicit pause stores the remaining duration. Each transition uses the current active phase and the existing revision guard. Catch-up applies elapsed work and rest from their scheduled deadlines, skips missed bells and requests the final workout alarm once when the final work set is committed. Rest overrides apply within the exercise regardless of the ordinary hide-rest setting. Completed seconds count toward session history and CSV, and are excluded from personal bests and plateaus. JSON v7 and the additive IndexedDB v8 upgrade preserve timer state and previous backups.
+
 The app shows save failures and backup issues that require attention. Settings shows the local revision and latest verified backup.
 
 ## Recording future work

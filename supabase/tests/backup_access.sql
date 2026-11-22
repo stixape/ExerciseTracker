@@ -1,7 +1,7 @@
 -- Run with supabase test db against a disposable local instance after migrations.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(17);
 insert into auth.users(id, email) values
   ('10000000-0000-0000-0000-000000000001', 'backup-one@example.invalid'),
   ('10000000-0000-0000-0000-000000000002', 'backup-two@example.invalid');
@@ -29,8 +29,10 @@ select is((select count(*) from public.backup_snapshots), 31::bigint, 'retention
 select is((select count(*) from public.backup_snapshots where id='retained-80'), 1::bigint, 'old protected copy survives');
 select lives_ok($$insert into public.backup_snapshots(user_id,device_id,id,revision,saved_at,payload)
   values(auth.uid(),'device-v6','v6',1,now(),'{"version":6,"checksum":"synthetic","backup":{},"data":{}}')$$, 'owner inserts v6');
+select lives_ok($$insert into public.backup_snapshots(user_id,device_id,id,revision,saved_at,payload)
+  values(auth.uid(),'device-v7','v7',1,now(),'{"version":7,"checksum":"synthetic","backup":{},"data":{}}')$$, 'owner inserts v7');
 select throws_ok($$insert into public.backup_snapshots(user_id,device_id,id,revision,saved_at,payload)
-  values(auth.uid(),'device-v6','unknown',2,now(),'{"version":7,"checksum":"synthetic","backup":{},"data":{}}')$$,
+  values(auth.uid(),'device-v7','unknown',2,now(),'{"version":8,"checksum":"synthetic","backup":{},"data":{}}')$$,
   '23514', null, 'unknown versions are rejected');
 set local role anon;
 set local request.jwt.claims = '{}';

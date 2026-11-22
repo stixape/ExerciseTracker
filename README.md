@@ -6,8 +6,9 @@ Existing public deployment: [stixape.github.io/ExerciseTracker](https://stixape.
 
 ## Features
 
-- Today's workout in one screen. Plan supports weighted, band, timed and custom exercises, with per-exercise rest and notes.
+- Today's workout in one screen. Plan supports weighted, band, timed, interval and custom exercises, with per-exercise rest and notes.
 - Editable targets, active workout selection, reviewed next targets and optional rest countdowns.
+- Interval runs a full exercise from one start, with automatic work and rest, a bell between phases, and pause, resume and skip-rest controls.
 - Per-exercise progress, personal bests, charts and recorded session details.
 - Band reordering and history-preserving archive.
 - Revision-checked IndexedDB, preserved migration sources and device recovery checkpoints.
