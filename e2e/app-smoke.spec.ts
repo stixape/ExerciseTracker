@@ -243,6 +243,7 @@ test('performed bands and over-target reps stay separate from reviewed next targ
   await expect(page.getByText('Review before saving')).toBeVisible();
   await expect(page.locator('.summary-set-row').getByText('Green x 18', { exact: true })).toBeVisible();
   await expect(page.getByText(/Next time: Blue.*20 reps/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save workout' })).toBeEnabled();
 
   await page.reload();
   await expect(page.getByRole('button', { name: 'Save workout' })).toBeVisible();

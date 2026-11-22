@@ -33,6 +33,11 @@ See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instru
 - Coverage includes compact summaries, ordered groups of different sets, invalid range drafts, numeric workout records, Next time replacement, and JSON backup restore.
 - A disposable Chromium folder retained access across a page reload. Four saves verified two-file rotation, a visible warning on simulated permission loss, and backlog recovery after reconnecting. This check used the browser's origin-private filesystem to simulate the selected folder. Physical Android folder permissions remain unverified.
 
+### Pages release
+
+- The requested non-force push of `0ad0a3b` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` reached GitHub. [Run 45043946535](https://github.com/stixape/ExerciseTracker/actions/runs/45043946535) skipped deployment because a browser test reloaded the review screen before the final set had finished saving.
+- The test now waits for **Save workout** to become enabled before reloading. Eight repeated desktop and mobile checks passed locally.
+
 ## Workout redesign verification on 2026-11-22
 
 - npm run verify passed with Node 24.19.0 and npm 11.17.0. It covered lint, 126 unit tests, the Pages build, 41 Chromium browser tests and offline verification. The desktop run skipped one mobile-only viewport case.
