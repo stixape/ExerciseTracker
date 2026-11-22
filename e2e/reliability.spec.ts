@@ -28,7 +28,7 @@ async function importFixture(page: Page) {
   await page.getByLabel('Import JSON export').setInputFiles({ name: 'synthetic-fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 4, data: fixture() })) });
   await expect(page.getByRole('button', { name: 'Restore this backup' })).toBeVisible();
   await page.getByRole('button', { name: 'Restore this backup' }).click();
-  await expect(page.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
 }
 async function downloadBytes(download: Download) {
   const stream = await download.createReadStream();
@@ -76,10 +76,10 @@ test('a verified JSON file restores all records after complete origin storage lo
   await context.setOffline(true);
   await restored.getByLabel('Import JSON export').setInputFiles({ name: 'verified.json', mimeType: 'application/json', buffer: file });
   await restored.getByRole('button', { name: 'Restore this backup' }).click();
-  await expect(restored.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
+  await expect(restored.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
   expect((await record(restored)).data).toEqual(expected);
   await restored.reload();
-  await expect(restored.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
+  await expect(restored.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
   expect((await record(restored)).data).toEqual(expected);
 });
 
@@ -88,7 +88,7 @@ test('stale suspended windows cannot overwrite another window’s imported recor
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
   const stale = await context.newPage();
   await stale.goto('/ExerciseTracker/settings');
-  await expect(stale.getByRole('heading', { name: 'Workout, bands and data' })).toBeVisible();
+  await expect(stale.getByRole('heading', { name: 'Settings' })).toBeVisible();
   const updated = fixture(); updated.template.name = 'Newer plan from another window';
   await page.getByLabel('Import JSON export').setInputFiles({ name: 'new.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 4, data: updated })) });
   await page.getByRole('button', { name: 'Restore this backup' }).click();
@@ -130,12 +130,14 @@ test('schema v5 and an old worker cache upgrade without losing workout records',
     await navigator.serviceWorker.ready;
   }, data);
   await page.goto('/ExerciseTracker/');
-  await expect(page.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
   await offlineReady(page);
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL), { timeout: 15_000 })
+    .toMatch(/\/service-worker\.js$/);
   expect((await record(page)).data).toEqual(data);
   await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('exercise-tracker-previous-release');
   await page.context().setOffline(true);
   await page.reload();
-  await expect(page.getByRole('link', { name: /ExerciseTracker home/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
   expect((await record(page)).data).toEqual(data);
 });

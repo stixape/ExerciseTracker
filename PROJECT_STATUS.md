@@ -1,20 +1,30 @@
 # ExerciseTracker project status
 
-Updated: 2026-10-26. Implementation branch: codex/reliable-recovery-20261026, based on c0b0125 (application base c58a8ab). The working tree and index were clean when this work started; no unrelated local edits were incorporated. Resulting commit identity is recorded by Git rather than a self-referential hash here. No push, deployment, new origin or hosted backend provisioning was performed.
+Updated 2026-11-22 on codex/workout-redesign from dcd30b5. The working tree and index were clean at the start. Publishing requires the approval recorded in AGENTS.md.
 
 ## Implemented
 
-- Canonical IndexedDB schema v6 with transaction-scoped revision checks, strict durability, rollback checkpoints and a small checkpoint metadata index. Stale open clients cannot overwrite newer records.
+- Workout opens directly to Today's plan. The landing panel scrolls its exercise list when needed and keeps the start or resume button in view. Completed session and set totals appear in Progress.
+- Plan includes custom rest minutes, multiline notes and numeric or text Other modifiers. Active-workout notes save to the matching plan immediately. Other targets staged during a workout apply on completion, and history retains the recorded labels and values.
+- Canonical IndexedDB schema v7 preserves the revision checks and checkpoints and adds a transactional completed-workout file queue.
 - Ready/empty/recovery startup states; defaults require explicit creation. Original legacy strings, retired table rows and pre-normalisation/pre-replacement records are preserved. Interrupted upgrades roll back atomically and can retry. Canonical saves do not depend on access to obsolete localStorage.
 - Exclusive, previewed/confirmed import/reset/restore. Unfinished fields stay outside committed state. Failed saves retain pending valid changes for rescue export and explicit retry; workout-save navigation waits for commitment.
-- Portable JSON v5 with snapshot identity, source revision/time and SHA-256 integrity checks; v1–v4 imports remain supported. Downloads are not labelled verified until reselected. No arbitrary import byte limit smaller than a valid export.
-- Verified, versioned folder backups where browser capabilities and permissions allow. Interrupted/corrupt attempts remain untouched and retry uses a separate file. Retention keeps 20 recent plus 30 daily copies, protected pre-replacement copies and the just-verified file despite clock changes. Browser-local checkpoints are not independent backups.
+- Portable JSON v6 with snapshot identity, source revision/time and SHA-256 checks. Imports cover v1–v6, including v5 checksum verification. The optional remote schema accepts v5 and v6.
+- A saved workout produces a verified JSON file when a supported device folder is connected. The folder keeps the newest two verified automatic workout files. Manual and protected copies use their existing recovery paths. If access is unavailable, Settings offers manual downloads and folder reconnection.
 - Optional Supabase authentication and immutable owner/device-stream backup integration, disabled until a dedicated origin is configured and a user opts in and approves uploads. Reset/import/restore pauses uploads and rotates the next stream. Client retries/read-back checks and server migration/policy tests are included; remote versions never automatically replace local data.
 - Historical band values are preserved through archive/restore; recorded session details remain readable after plan changes. Starter datasets no longer share a mutable palette. Compatible dependency security updates and patched Vitest 4.1.12 are locked.
 
 See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instructions](docs/recovery.md), [audit and evidence limits](docs/reliability-audit.md), and [optional remote setup](docs/sync-strategy.md).
 
-## Verification performed on 2026-10-26
+## Verification performed on 2026-11-22
+
+- npm run verify passed with Node 24.19.0 and npm 11.17.0. It covered lint, 126 unit tests, the Pages build, 41 Chromium browser tests and offline verification. The desktop run skipped one mobile-only viewport case.
+- Browser coverage includes long plans with large text, resume across days, rest overrides, note editing, Other target changes, three-workout rotation with a synthetic Chromium folder handle, and independent JSON restore after clearing a disposable origin.
+- Unit coverage includes permission loss, write and deletion failure, duplicate and concurrent retries, exact-revision recovery, failed-save rollback, and v5/v6 backup and CSV compatibility.
+- Three interleaved synthetic benchmark runs compared this branch with dcd30b5 using fake IndexedDB. At 500 sessions, the median checkpointed save was 518 → 609 ms and the JSON export was 203 → 221 ms. At 1,500 sessions, those medians were 2,064 → 1,840 ms and 674 → 635 ms. Individual runs varied widely. These figures measure local CPU and process-local storage, and ordinary app edits now avoid folder-file work.
+- The physical Android folder check and live Supabase SQL tests are pending. The browser folder tests used Chromium's origin-private filesystem as a synthetic stand-in for the device folder.
+
+## Previous verification on 2026-10-26
 
 - npm run verify passed with Node 24.19.0/npm 11.17.0 in CI mode: lint, 119 unit tests in 16 files, TypeScript/Pages build, 33 desktop/mobile Chromium browser tests, and one intentional desktop skip for a mobile-only viewport check. CI rejects flaky test results.
 - The complete-loss drill cleared IndexedDB, localStorage, caches and service workers in disposable browser profiles. It reacquired the shell online, restored an independently downloaded file offline, reopened offline and compared plans, history, bands, settings and the active workout.

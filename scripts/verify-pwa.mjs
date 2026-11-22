@@ -87,7 +87,7 @@ try {
 
   await page.goto(appUrl, { waitUntil: 'load' });
   await page.getByRole('button', { name: 'Create starter plan' }).click();
-  await page.getByRole('link', { name: /ExerciseTracker home/i }).waitFor({ state: 'visible' });
+  await page.getByRole('link', { name: 'Workout', exact: true }).waitFor({ state: 'visible' });
   async function savedData() {
     return page.evaluate(async () => {
       const open = globalThis.indexedDB.open('ExerciseTracker');
@@ -163,7 +163,7 @@ try {
   await offlineNavigation;
   await page.waitForLoadState('domcontentloaded');
   try {
-    await page.getByRole('link', { name: /ExerciseTracker home/i }).waitFor({ state: 'visible', timeout: 10_000 });
+    await page.getByRole('link', { name: 'Workout', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   } catch (error) {
     const pageText = await page.locator('body').innerText().catch(() => '<unavailable>');
     throw new Error(

@@ -56,8 +56,10 @@ export function BackupPanel() {
     let cancelled = false;
     async function refresh() {
       try {
-        const [file, remote, directory] = await Promise.all([offlineDb.preferences.get('last-file-backup'), offlineDb.preferences.get('last-remote-backup'), offlineDb.preferences.get('backup-directory')]);
-        if (!cancelled) { setFileBackup(file?.value as VerifiedFileBackup | undefined); setRemoteBackup(remote?.value as VerifiedFileBackup | undefined); setFolder(Boolean(directory?.value)); }
+        const [file, remote, directory, workout] = await Promise.all([offlineDb.preferences.get('last-file-backup'), offlineDb.preferences.get('last-remote-backup'), offlineDb.preferences.get('backup-directory'), offlineDb.preferences.get('last-workout-backup')]);
+        const latest = [file?.value as VerifiedFileBackup | undefined, workout?.value as VerifiedFileBackup | undefined]
+          .sort((left, right) => (right?.revision ?? -1) - (left?.revision ?? -1))[0];
+        if (!cancelled) { setFileBackup(latest); setRemoteBackup(remote?.value as VerifiedFileBackup | undefined); setFolder(Boolean(directory?.value)); }
       } catch { if (!cancelled) setMessage('Backup status is unavailable.'); }
     }
     void refresh();
@@ -79,7 +81,7 @@ export function BackupPanel() {
       <p>{fileBackup ? 'Last verified file: revision ' + fileBackup.revision + ', ' + new Date(fileBackup.verifiedAt).toLocaleString() : 'No independent file backup has been verified.'}</p>
       <p>{remoteBackup ? 'Last verified remote copy: revision ' + remoteBackup.revision + ', ' + new Date(remoteBackup.verifiedAt).toLocaleString() : 'No remote backup has been verified.'}</p>
       <p>Browser eviction protection: {persistence.replace('_', ' ')}. This cannot protect against cleared browser data or a lost device.</p>
-      {folder && <p>Folder retention keeps 20 recent files plus 30 daily files. Protected pre-replacement copies are retained. Unrecognised files are left alone.</p>}
+      {folder && <p>Automatic workout backups keep the two newest verified copies. On-demand and protected recovery files use separate retention.</p>}
       <div className="backup-controls">
         <button type="button" disabled={disabled} onClick={() => void run(async () => {
           downloadTextFile('exercise-tracker-' + snapshot!.snapshotId + '.json', await getBackupJson(), 'application/json');
@@ -93,7 +95,7 @@ export function BackupPanel() {
             setFileBackup(verified); setMessage('Saved backup verified against the current revision.');
           });
         }} /></label>
-        {supportsFolderBackup() && <button type="button" disabled={disabled} onClick={() => void run(async () => { await selectBackupFolder(); await backupToFolder(snapshot!); setMessage('Folder connected and the current backup verified. Backups run while this app is open.'); })}>{folder ? 'Reconnect backup folder' : 'Choose backup folder'}</button>}
+        {supportsFolderBackup() && <button type="button" disabled={disabled} onClick={() => void run(async () => { await selectBackupFolder(); setMessage('Folder connected. Automatic workout backups run while the app is open.'); })}>{folder ? 'Reconnect backup folder' : 'Choose backup folder'}</button>}
         {folder && <>
           <button type="button" disabled={disabled} onClick={() => void run(async () => { await backupToFolder(snapshot!); setMessage('Folder backup verified.'); })}>Back up to folder now</button>
           <button type="button" disabled={disabled} onClick={() => void run(async () => { await disconnectBackupFolder(); setMessage('Folder disconnected. Existing files were kept.'); })}>Disconnect folder</button>

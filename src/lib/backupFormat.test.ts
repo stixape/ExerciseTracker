@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createJsonExport } from '../domain/export';
+import { createCsvExport, createJsonExport } from '../domain/export';
 import { createDefaultAppData } from '../domain/sampleData';
+import { completeSessionIfDone, completeSet, createSessionFromDay } from '../domain/session';
 import { parseJsonImport } from './localData';
-import { canonicalJson } from './backupFormat';
+import { backupChecksum, canonicalJson } from './backupFormat';
+import { verifyBackupFile } from './fileBackups';
 
 describe('portable recovery format', () => {
   it.each([1, 2, 3, 4])('keeps v%i exports restorable', (version) => {
@@ -15,6 +17,31 @@ describe('portable recovery format', () => {
     const identity = { snapshotId: 'snapshot-example', revision: 2, savedAt: '2026-10-26T10:00:00.000Z' };
     expect(createJsonExport(data, identity)).toBe(createJsonExport(data, identity));
     expect(canonicalJson({ z: 1, a: 2 })).toBe(canonicalJson({ a: 2, z: 1 }));
+  });
+  it('verifies the original v5 checksum and rejects a relabelled envelope', async () => {
+    const data = createDefaultAppData('local-user');
+    const backup = { snapshotId: 'snapshot_v5', revision: 7, savedAt: '2026-10-26T10:00:00.000Z' };
+    const envelope = { version: 5, data, backup, checksum: backupChecksum(data, backup, 5) };
+    expect(parseJsonImport(JSON.stringify(envelope), 'local-user')).toEqual({ ok: true, data });
+    await expect(verifyBackupFile(JSON.stringify(envelope))).resolves.toMatchObject(backup);
+    expect(parseJsonImport(JSON.stringify({ ...envelope, version: 6 }), 'local-user').ok).toBe(false);
+  });
+  it('round trips notes and modifiers with recorded definitions, and includes targets and results in CSV', () => {
+    const data = createDefaultAppData('local-user');
+    const day = data.template.days[0];
+    day.exercises = [{
+      ...day.exercises[0], mode: 'other', notes: 'Use a mat.\nSteady pace.', restSeconds: 90,
+      modifiers: [{ id: 'field', label: 'Grip', type: 'text' }],
+      sets: [{ ...day.exercises[0].sets[0], target: { modifiers: { field: 'Wide' } } }],
+    }];
+    const session = createSessionFromDay(day);
+    data.sessions = [completeSessionIfDone(completeSet(session, session.sets[0].id, { modifiers: { field: 'Neutral' } }))];
+    day.exercises[0].modifiers = [];
+    day.exercises[0].sets[0].target = {};
+    const raw = createJsonExport(data);
+    expect(parseJsonImport(raw, 'local-user')).toEqual({ ok: true, data });
+    const csv = createCsvExport(data.sessions);
+    expect(csv).toContain('Grip,Wide,Neutral');
   });
   it.each(['data', 'backup', 'checksum'])('rejects altered %s without accepting a replacement', (part) => {
     const envelope = JSON.parse(createJsonExport(createDefaultAppData('local-user')));

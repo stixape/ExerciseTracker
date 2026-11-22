@@ -99,9 +99,9 @@ describe('local data import, normalization, and legacy fallback', () => {
 
   it('rejects invalid JSON and unsupported export versions with clear errors', () => {
     expect(parseJsonImport('{not-json', userId)).toEqual({ ok: false, error: 'Import file is not valid JSON.' });
-    expect(parseJsonImport(JSON.stringify({ version: 6, data: createDefaultAppData(userId) }), userId)).toEqual({
+    expect(parseJsonImport(JSON.stringify({ version: 7, data: createDefaultAppData(userId) }), userId)).toEqual({
       ok: false,
-      error: 'Import file uses unsupported version 6. Supported versions are 1-5.',
+      error: 'Import file uses unsupported version 7. Supported versions are 1-6.',
     });
   });
 

@@ -5,11 +5,9 @@ import {
   BarChart3,
   ChevronDown,
   Check,
-  ChevronRight,
   Download,
   Dumbbell,
   GripVertical,
-  Home,
   Palette,
   Play,
   Plus,
@@ -21,14 +19,16 @@ import { LOCAL_USER_ID, TrackerProvider, useTracker } from './app/TrackerContext
 import { EmptyState, PageTitle } from './components/PageTitle';
 import { calculateSetVolume, detectPlateaus, getPerformedRepCount } from './domain/analytics';
 import { archiveBandColour, reorderBandColours } from './domain/bands';
-import { getTemplateDayForToday } from './domain/calendar';
+import { getTemplateDayForToday, getTodayWeekday, weekdayName } from './domain/calendar';
 import { createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
 import { createDefaultAppData } from './domain/sampleData';
-import { createSessionFromDay } from './domain/session';
+import { createSessionFromDay, updateExerciseNotes } from './domain/session';
+import { changeModifierValue, MAX_REST_SECONDS, modifierValue } from './domain/modifiers';
 import type {
   BandColour,
   MetricMode,
+  Modifier,
   SessionSet,
   SetValues,
   TemplateDay,
@@ -38,7 +38,9 @@ import type {
 import { primeAlarmAudio } from './lib/alarm';
 import { BackupPanel } from './components/BackupPanel';
 import { ValidatedInput } from './components/ValidatedInput';
-import { formatActualReps, formatBandNames, formatSetActual } from './lib/workoutFormatting';
+import { ExerciseNotes } from './components/ExerciseNotes';
+import { ModifierInput } from './components/ModifierInput';
+import { formatActualReps, formatBandNames, formatPlannedValues, formatSetActual } from './lib/workoutFormatting';
 import { WorkoutPage } from './features/workout/WorkoutPage';
 
 function App() {
@@ -53,12 +55,8 @@ function AppShell() {
   const { data } = useTracker();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
-  const todayDay = getTemplateDayForToday(data.template);
-  const workoutPath = data.activeWorkout ? '/workout' : todayDay ? `/workout/${todayDay.id}` : '/workout';
-  const activeWorkoutPreviewPath = data.activeWorkout ? `/workout/${data.activeWorkout.session.templateDayId}` : undefined;
-  const hideWorkoutChrome = Boolean(
-    data.activeWorkout && (location.pathname === '/workout' || location.pathname === activeWorkoutPreviewPath),
-  );
+  const landing = location.pathname === '/workout';
+  const hideWorkoutChrome = location.pathname === '/workout/active';
   const routeName = location.pathname.startsWith('/plan')
     ? 'Plan'
     : location.pathname.startsWith('/workout')
@@ -67,7 +65,7 @@ function AppShell() {
         ? 'Progress'
         : location.pathname.startsWith('/settings')
           ? 'Settings'
-          : 'Today';
+          : 'Workout';
   const completedSets = data.activeWorkout?.session.sets.filter((set) => set.completedAt).length ?? 0;
   const totalSets = data.activeWorkout?.session.sets.length ?? 0;
 
@@ -84,28 +82,17 @@ function AppShell() {
   }, [location.pathname, routeName]);
 
   return (
-    <div className={hideWorkoutChrome ? 'app-shell workout-focus-shell' : 'app-shell'}>
-      {!hideWorkoutChrome && (
-        <header className="top-bar">
-          <NavLink to="/" className="brand-link" aria-label="ExerciseTracker home">
-            <span className="brand-mark">
-              <Dumbbell size={24} />
-            </span>
-            <span>ExerciseTracker</span>
-          </NavLink>
-          <span className="storage-pill">Local-first</span>
-        </header>
-      )}
-
-      <main ref={mainRef} id="main-content" className={hideWorkoutChrome ? 'main-content workout-focus-main' : 'main-content'}>
+    <div className={hideWorkoutChrome ? 'app-shell workout-focus-shell' : landing ? 'app-shell workout-landing-shell' : 'app-shell'}>
+      <main ref={mainRef} id="main-content" className={hideWorkoutChrome ? 'main-content workout-focus-main' : landing ? 'main-content workout-landing-main' : 'main-content'}>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Navigate replace to="/workout" />} />
           <Route path="/plan" element={<PlanPage />} />
-          <Route path="/workout/:dayId" element={<WorkoutPage />} />
-          <Route path="/workout" element={<WorkoutPage />} />
+          <Route path="/workout/:dayId" element={<Navigate replace to="/workout" />} />
+          <Route path="/workout/active" element={<WorkoutPage />} />
+          <Route path="/workout" element={<WorkoutLanding />} />
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate replace to="/" />} />
+          <Route path="*" element={<Navigate replace to="/workout" />} />
         </Routes>
       </main>
 
@@ -115,9 +102,8 @@ function AppShell() {
 
       {!hideWorkoutChrome && (
         <nav className="bottom-nav" aria-label="Primary">
-          <NavItem to="/" icon={<Home size={20} />} label="Home" />
+          <NavItem to="/workout" icon={<Activity size={20} />} label="Workout" />
           <NavItem to="/plan" icon={<Dumbbell size={20} />} label="Plan" />
-          <NavItem to={workoutPath} icon={<Activity size={20} />} label="Workout" />
           <NavItem to="/progress" icon={<BarChart3 size={20} />} label="Progress" />
           <NavItem to="/settings" icon={<Settings size={20} />} label="Settings" />
         </nav>
@@ -135,85 +121,85 @@ function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label
   );
 }
 
-function Dashboard() {
+function WorkoutLanding() {
   const { data, saveData } = useTracker();
   const navigate = useNavigate();
-  const completedSessions = data.sessions.filter((session) => session.completedAt).length;
-  const totalCompletedSets = data.sessions.reduce((total, session) => total + session.sets.filter((set) => set.completedAt).length, 0);
-  const todayDay = getTemplateDayForToday(data.template);
-  const activeSession = data.activeWorkout?.session;
-  const activeCompletedSets = activeSession?.sets.filter((set) => set.completedAt).length ?? 0;
-  const activeTotalSets = activeSession?.sets.length ?? 0;
+  const [today, setToday] = useState(() => new Date());
+  const todayWeekday = getTodayWeekday(today);
+  const scheduledDay = getTemplateDayForToday(data.template, today);
+  const active = data.activeWorkout?.session;
+  const day = active?.snapshot ?? scheduledDay;
+  const canStart = Boolean(scheduledDay?.exercises.some((exercise) => exercise.sets.length));
+  const completed = active?.sets.filter((set) => set.completedAt).length;
 
-  function startToday() {
-    if (!todayDay) return;
-    if (!todayDay.exercises.length || !todayDay.exercises.some((exercise) => exercise.sets.length)) {
-      navigate(`/workout/${todayDay.id}`);
-      return;
+  useEffect(() => {
+    let timer: number;
+    function refresh() {
+      const now = new Date();
+      setToday(now);
+      const midnight = new Date(now);
+      midnight.setHours(24, 0, 0, 0);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, midnight.getTime() - now.getTime());
     }
-    saveData((current) => ({ ...current, activeWorkout: { session: createSessionFromDay(todayDay) } }));
+    refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
+
+  async function startToday() {
+    const currentDay = getTemplateDayForToday(data.template);
+    if (!currentDay?.exercises.some((exercise) => exercise.sets.length)) return;
     primeAlarmAudio();
-    navigate('/workout');
+    const session = createSessionFromDay({ ...currentDay, label: weekdayName(currentDay.weekday) });
+    if (await saveData((current) => current.activeWorkout ? current : { ...current, activeWorkout: { session } })) {
+      navigate('/workout/active');
+    }
   }
 
   return (
-    <div className="page-stack">
-      <section className="overview-band">
-        <div>
-          <p className="eyebrow">Today</p>
-          <h1>{activeSession?.label ?? todayDay?.label ?? 'Rest day'}</h1>
-          <p>
-            {activeSession
-              ? `${activeCompletedSets} of ${activeTotalSets} sets complete`
-              : todayDay
-                ? `${todayDay.exercises.length} exercises planned`
-                : 'Nothing is scheduled today. Recover well or choose another workout.'}
-          </p>
-        </div>
-        {activeSession ? (
-          <button className="primary-button" type="button" onClick={() => navigate('/workout')}>
-            <Play size={18} />
-            Resume workout
+    <section className="overview-band workout-landing" aria-labelledby="today-heading">
+      <header>
+        <p className="eyebrow">{active && day?.weekday !== todayWeekday ? 'Workout in progress' : 'Today'}</p>
+        <h1 id="today-heading">{day ? weekdayName(day.weekday) : 'Rest day'}</h1>
+        {active && <p>{completed} of {active.sets.length} sets complete</p>}
+        {!day && <p>{weekdayName(todayWeekday)} · Nothing is scheduled today.</p>}
+        {day && !active && !canStart && <p>Add an exercise to start today’s workout.</p>}
+      </header>
+      {day && day.exercises.length > 0 && (
+        <ol className="today-plan" aria-label="Planned exercises" tabIndex={0}>
+          {day.exercises.map((exercise) => {
+            const targets = exercise.sets.map((set) => formatPlannedValues(exercise.mode, set.target, data.bandColours, exercise.modifiers));
+            const uniform = targets.every((target) => target === targets[0]);
+            return (
+              <li key={exercise.id}>
+                <strong>{exercise.name}</strong>
+                <p>{targets.length} {targets.length === 1 ? 'set' : 'sets'}{uniform && targets[0] ? ` · ${targets[0]}` : ''}</p>
+                {!uniform && <ul>{targets.map((target, index) => (
+                  <li key={exercise.sets[index].id}>Set {exercise.sets[index].setNumber} · {target}</li>
+                ))}</ul>}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <footer className="today-action">
+        {active ? (
+          <button className="primary-button" type="button" onClick={() => navigate('/workout/active')}>
+            <Play size={18} /> Resume workout
           </button>
-        ) : todayDay ? (
-          <button className="primary-button" type="button" onClick={startToday}>
-            <Play size={18} />
-            Start workout
+        ) : canStart ? (
+          <button className="primary-button" type="button" onClick={() => void startToday()}>
+            <Play size={18} /> Start workout
           </button>
-        ) : (
-          <button className="ghost-button hero-ghost-button" type="button" onClick={() => navigate('/workout')}>
-            Choose a workout
-          </button>
-        )}
-      </section>
-
-      <section className="metric-grid">
-        <MetricTile label="Completed sessions" value={completedSessions} />
-        <MetricTile label="Completed sets" value={totalCompletedSets} />
-        <MetricTile label="Template days" value={data.template.days.length} />
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Weekly template</p>
-            <h2>{data.template.name}</h2>
-          </div>
-          <button className="icon-text-button" type="button" onClick={() => navigate('/plan')}>
-            Edit <ChevronRight size={18} />
-          </button>
-        </div>
-        <div className="day-list">
-          {data.template.days.map((day) => (
-            <button key={day.id} className="day-row" type="button" onClick={() => navigate(`/workout/${day.id}`)}>
-              <span>{day.label}</span>
-              <small>{day.exercises.length} exercises</small>
-              <ChevronRight size={18} />
-            </button>
-          ))}
-        </div>
-      </section>
-    </div>
+        ) : day && <NavLink className="secondary-button" to="/plan">Edit plan</NavLink>}
+      </footer>
+    </section>
   );
 }
 
@@ -272,7 +258,7 @@ function PlanPage() {
 
   function removeExercise(exercise: TemplateExercise, exerciseIndex: number) {
     if (!selectedDay) return;
-    const confirmed = window.confirm(`Remove ${exercise.name} and all of its planned sets from ${selectedDay.label}?`);
+    const confirmed = window.confirm(`Remove ${exercise.name} and all of its planned sets from ${weekdayName(selectedDay.weekday)}?`);
     if (!confirmed) return;
 
     setLastRemoved({ dayId: selectedDay.id, exercise: structuredClone(exercise), index: exerciseIndex });
@@ -294,12 +280,12 @@ function PlanPage() {
   }
 
   if (!selectedDay) {
-    return <EmptyState title="No plan days" text="Create a template day to start building workouts." />;
+    return <><h1 className="sr-only">Plan</h1><EmptyState title="No plan days" text="Create a template day to start building workouts." /></>;
   }
 
   return (
     <div className="page-stack">
-      <PageTitle eyebrow="Plan" title="Weekly workouts" text="Choose a day, then expand only the exercises you want to edit." />
+      <h1 className="sr-only">Plan</h1>
 
       <div className="day-tabs" role="tablist" aria-label="Workout days">
         {data.template.days.map((day) => (
@@ -311,17 +297,10 @@ function PlanPage() {
             aria-selected={day.id === selectedDay.id}
             onClick={() => setSelectedDayId(day.id)}
           >
-            {day.label}
+            {weekdayName(day.weekday)}
           </button>
         ))}
       </div>
-
-      <section className="section-block">
-        <label className="inline-label">
-          Day name
-          <ValidatedInput value={selectedDay.label} onValue={(label) => updateDay(selectedDay.id, (day) => ({ ...day, label }))} />
-        </label>
-      </section>
 
       {lastRemoved && (
         <section className="status-strip" role="status">
@@ -344,6 +323,7 @@ function PlanPage() {
             exerciseIndex={exerciseIndex}
             bandColours={data.bandColours}
             onChange={(updater) => updateExercise(exercise.id, updater)}
+            onSaveNotes={(notes) => saveData((current) => updateExerciseNotes(current, selectedDay.id, exercise.id, notes))}
             onRemove={() => removeExercise(exercise, exerciseIndex)}
           />
         ))}
@@ -362,6 +342,7 @@ function getDefaultReps(exerciseIndex: number): number {
 }
 
 function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandColours: BandColour[], existing: SetValues = {}): SetValues {
+  if (mode === 'other') return {};
   const reps = existing.reps ?? getDefaultReps(exerciseIndex);
 
   if (mode === 'weighted_reps') {
@@ -388,23 +369,47 @@ function PlanExerciseEditor({
   exerciseIndex,
   bandColours,
   onChange,
+  onSaveNotes,
   onRemove,
 }: {
   exercise: TemplateExercise;
   exerciseIndex: number;
   bandColours: BandColour[];
   onChange: (updater: (exercise: TemplateExercise) => TemplateExercise) => void;
+  onSaveNotes: (notes?: string) => Promise<boolean>;
   onRemove: () => void;
 }) {
   function changeMode(mode: MetricMode) {
-    onChange((current) => ({
+    onChange((current) => current.mode === mode ? current : ({
       ...current,
       mode,
+      modifiers: undefined,
       sets: current.sets.map((set) => ({
         ...set,
         target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, set.target),
       })),
     }));
+  }
+
+  function addModifier() {
+    onChange((current) => {
+      const fields = current.modifiers ?? [];
+      if (current.mode !== 'other' || fields.length >= 2) return current;
+      const label = fields.some((field) => field.label === 'Modifier 2') ? 'Modifier 1' : `Modifier ${fields.length + 1}`;
+      return { ...current, modifiers: [...fields, { id: createId('modifier'), label, type: 'number' }] };
+    });
+  }
+
+  function updateModifier(id: string, replacement?: Modifier) {
+    onChange((current) => {
+      const modifiers = (current.modifiers ?? []).flatMap((field) => field.id === id ? replacement ?? [] : field);
+      if (replacement?.id === id) return { ...current, modifiers };
+      const sets = current.sets.map((set) => ({
+        ...set,
+        target: { ...set.target, modifiers: changeModifierValue(set.target.modifiers, id, undefined) },
+      }));
+      return { ...current, modifiers, sets };
+    });
   }
 
   return (
@@ -435,95 +440,108 @@ function PlanExerciseEditor({
           </button>
         </div>
 
+        <label className="inline-label">
+          Rest Time (minutes)
+          <ValidatedInput type="number" optional min={0} max={MAX_REST_SECONDS / 60} step="any"
+            value={exercise.restSeconds === undefined ? undefined : Number((exercise.restSeconds / 60).toFixed(4))}
+            onValue={(value) => onChange((current) => ({ ...current, restSeconds: value === '' ? undefined : Math.round(Number(value) * 60) }))} />
+        </label>
+
         <div className="segmented-control" role="group" aria-label={`Metric for ${exercise.name}`}>
-          <button
-            className={exercise.mode === 'weighted_reps' ? 'active' : ''}
-            type="button"
-            aria-pressed={exercise.mode === 'weighted_reps'}
-            onClick={() => changeMode('weighted_reps')}
-          >
-            Weight
-          </button>
-          <button
-            className={exercise.mode === 'timed_hold' ? 'active' : ''}
-            type="button"
-            aria-pressed={exercise.mode === 'timed_hold'}
-            onClick={() => changeMode('timed_hold')}
-          >
-            Time
-          </button>
-          <button
-            className={exercise.mode === 'band_reps' ? 'active' : ''}
-            type="button"
-            aria-pressed={exercise.mode === 'band_reps'}
-            onClick={() => changeMode('band_reps')}
-          >
-            Bands
-          </button>
+          {(['weighted_reps', 'band_reps', 'timed_hold', 'other'] as const).map((mode) => (
+            <button key={mode} type="button" className={exercise.mode === mode ? 'active' : ''}
+              aria-pressed={exercise.mode === mode} onClick={() => changeMode(mode)}>
+              {formatModeLabel(mode)}
+            </button>
+          ))}
         </div>
 
-      <div className="set-grid">
-        {exercise.sets.map((set) => (
-          <div className="set-editor" key={set.id}>
-            <div className="set-editor-heading">
-              <strong>Set {set.setNumber}</strong>
-              {exercise.sets.length > 1 && (
-                <button
-                  type="button"
-                  className="icon-button danger"
-                  aria-label={`Remove set ${set.setNumber}`}
-                  onClick={() => {
-                    if (!window.confirm(`Remove set ${set.setNumber} from ${exercise.name}?`)) return;
-                    onChange((current) => ({
-                      ...current,
-                      sets: current.sets
-                        .filter((item) => item.id !== set.id)
-                        .map((item, index) => ({
-                          ...item,
-                          setNumber: index + 1,
-                        })),
-                    }));
-                  }}
-                >
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
-            <SetValueEditor
-              mode={exercise.mode}
-              values={set.target}
-              bandColours={bandColours}
-              onChange={(target) =>
-                onChange((current) => ({
-                  ...current,
-                  sets: current.sets.map((item) => (item.id === set.id ? { ...item, target } : item)),
-                }))
-              }
-            />
+        {exercise.mode === 'other' && (
+          <div className="modifier-definitions">
+            {(exercise.modifiers ?? []).map((field, index) => (
+              <div className="modifier-definition" key={field.id}>
+                <label>{`Modifier ${index + 1} label`}
+                  <ValidatedInput value={field.label} onValue={(label) => updateModifier(field.id, { ...field, label })} />
+                </label>
+                <label>{`Modifier ${index + 1} type`}
+                  <select value={field.type} onChange={(event) => updateModifier(field.id, { ...field, id: createId('modifier'), type: event.target.value as Modifier['type'] })}>
+                    <option value="number">Number</option>
+                    <option value="text">Text</option>
+                  </select>
+                </label>
+                <button className="icon-button danger" type="button" onClick={() => updateModifier(field.id)}
+                  aria-label={`Remove modifier ${field.label}`}><Trash2 size={16} /></button>
+              </div>
+            ))}
+            {(exercise.modifiers?.length ?? 0) < 2 && <button className="small-button" type="button" onClick={addModifier}>
+              <Plus size={16} /> Add modifier
+            </button>}
           </div>
-        ))}
-      </div>
+        )}
 
-      <button
-        className="small-button"
-        type="button"
-        onClick={() =>
-          onChange((current) => ({
-            ...current,
-            sets: [
-              ...current.sets,
-              {
-                id: createId('template_set'),
-                setNumber: current.sets.length + 1,
-                target: getDefaultTargetForMode(current.mode, exerciseIndex, bandColours),
-              },
-            ],
-          }))
-        }
-      >
-        <Plus size={16} />
-        Add set
-      </button>
+        <div className="set-grid">
+          {exercise.sets.map((set) => (
+            <div className="set-editor" key={set.id}>
+              <div className="set-editor-heading">
+                <strong>Set {set.setNumber}</strong>
+                {exercise.sets.length > 1 && (
+                  <button
+                    type="button"
+                    className="icon-button danger"
+                    aria-label={`Remove set ${set.setNumber}`}
+                    onClick={() => {
+                      onChange((current) => current.sets.length <= 1 ? current : ({
+                        ...current,
+                        sets: current.sets
+                          .filter((item) => item.id !== set.id)
+                          .map((item, index) => ({
+                            ...item,
+                            setNumber: index + 1,
+                          })),
+                      }));
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+              <SetValueEditor
+                mode={exercise.mode}
+                modifiers={exercise.modifiers}
+                values={set.target}
+                bandColours={bandColours}
+                onChange={(target) =>
+                  onChange((current) => ({
+                    ...current,
+                    sets: current.sets.map((item) => (item.id === set.id ? { ...item, target } : item)),
+                  }))
+                }
+              />
+            </div>
+          ))}
+        </div>
+
+        <ExerciseNotes notes={exercise.notes} onSave={onSaveNotes} />
+        <button
+          className="small-button"
+          type="button"
+          onClick={() =>
+            onChange((current) => ({
+              ...current,
+              sets: [
+                ...current.sets,
+                {
+                  id: createId('template_set'),
+                  setNumber: current.sets.length + 1,
+                  target: getDefaultTargetForMode(current.mode, exerciseIndex, bandColours),
+                },
+              ],
+            }))
+          }
+        >
+          <Plus size={16} />
+          Add set
+        </button>
       </div>
     </details>
   );
@@ -535,12 +553,14 @@ function getNumericInputStyle(value: number | undefined): React.CSSProperties {
 
 function SetValueEditor({
   mode,
+  modifiers,
   values,
   bandColours,
   onChange,
   disabled,
 }: {
   mode: MetricMode;
+  modifiers?: Modifier[];
   values: SetValues;
   bandColours: BandColour[];
   onChange: (values: SetValues) => void;
@@ -548,6 +568,13 @@ function SetValueEditor({
 }) {
   function patch(next: Partial<SetValues>) {
     onChange({ ...values, ...next });
+  }
+
+  if (mode === 'other') {
+    return <div className="value-editor modifier-values">{(modifiers ?? []).map((field) => (
+      <ModifierInput key={field.id} field={field} label={`Target ${field.label}`} value={modifierValue(values.modifiers, field.id)}
+        onChange={(value) => patch({ modifiers: changeModifierValue(values.modifiers, field.id, value) })} />
+    ))}</div>;
   }
 
   if (mode === 'timed_hold') {
@@ -571,7 +598,7 @@ function SetValueEditor({
     return (
       <div className="value-editor">
         <label className="compact-field">
-          Reps
+          Repetitions
           <ValidatedInput
             className="numeric-input"
             style={getNumericInputStyle(values.reps)}
@@ -612,7 +639,7 @@ function SetValueEditor({
   return (
     <div className="value-editor two">
       <label className="compact-field">
-        Kg
+        KG
         <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.weightKg)}
@@ -625,7 +652,7 @@ function SetValueEditor({
         />
       </label>
       <label className="compact-field">
-        Reps
+        Repetitions
         <ValidatedInput
           className="numeric-input"
           style={getNumericInputStyle(values.reps)}
@@ -699,7 +726,7 @@ function ProgressPage() {
             aria-selected={day.id === selectedDay.id}
             onClick={() => chooseDay(day)}
           >
-            {day.label}
+            {weekdayName(day.weekday)}
           </button>
         ))}
       </div>
@@ -800,6 +827,10 @@ function ProgressPage() {
         <div className="section-heading">
           <h2>Session history</h2>
         </div>
+        <div className="metric-grid">
+          <MetricTile label="Completed sessions" value={data.sessions.filter((session) => session.completedAt).length} />
+          <MetricTile label="Completed sets" value={data.sessions.reduce((total, session) => total + session.sets.filter((set) => set.completedAt).length, 0)} />
+        </div>
         {data.sessions.length ? (
           <div className="result-list">
             {data.sessions.map((session) => (
@@ -813,7 +844,8 @@ function ProgressPage() {
                     <summary>View recorded sets</summary>
                     {session.snapshot.exercises.map((exercise) => <div key={exercise.id}>
                       <strong>{exercise.name}</strong>
-                      {session.sets.filter((set) => set.exerciseId === exercise.id).map((set) => <p key={set.id}>Set {set.setNumber}: {formatSetActual(set, data.bandColours)}</p>)}
+                      {exercise.notes && <p className="recorded-notes">{exercise.notes}</p>}
+                      {session.sets.filter((set) => set.exerciseId === exercise.id).map((set) => <p key={set.id}>Set {set.setNumber}: {formatSetActual(set, data.bandColours, exercise.modifiers)}</p>)}
                     </div>)}
                   </details>
                 </div>
@@ -858,7 +890,7 @@ function buildExerciseSummary(exercise: TemplateExercise, daySessions: WorkoutSe
         date: formatDate(session.startedAt),
         values: session.sets
           .filter((set) => set.completedAt && setMatchesExercise(set, exercise))
-          .map((set) => formatSetActual(set, bandColours))
+          .map((set) => formatSetActual(set, bandColours, session.snapshot.exercises[set.exerciseIndex]?.modifiers))
           .join(' | '),
       }))
       .filter((entry) => entry.values),
@@ -947,7 +979,7 @@ function setMatchesExercise(set: SessionSet, exercise: TemplateExercise): boolea
 }
 
 function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours: BandColour[]): string[] {
-  if (!sets.length) return [];
+  if (!sets.length || mode === 'other') return [];
 
   if (mode === 'weighted_reps') {
     const heaviest = [...sets].sort((a, b) => (b.actual.weightKg ?? 0) - (a.actual.weightKg ?? 0))[0];
@@ -971,6 +1003,7 @@ function getPersonalBestLabels(mode: MetricMode, sets: SessionSet[], bandColours
 function formatModeLabel(mode: MetricMode): string {
   if (mode === 'weighted_reps') return 'Weight';
   if (mode === 'timed_hold') return 'Time';
+  if (mode === 'other') return 'Other';
   return 'Bands';
 }
 
@@ -1057,7 +1090,7 @@ function SettingsPage() {
 
   return (
     <div className="page-stack">
-      <PageTitle eyebrow="Settings" title="Workout, bands and data" text="Adjust your workout flow, manage resistance bands, and export your records." />
+      <h1 className="sr-only">Settings</h1>
 
       <section className="section-block">
         <div className="section-heading">

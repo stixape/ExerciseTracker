@@ -31,6 +31,13 @@ export interface CheckpointSummary {
 }
 interface RecoverySource { id: string; userId: string; createdAt: string; source: string; raw: unknown }
 export interface Preference { key: string; value: unknown }
+export interface WorkoutBackupJob {
+  snapshotId: string;
+  userId: string;
+  revision: number;
+  /** The canonical record supplies the payload until another revision replaces it. */
+  snapshot?: AppSnapshot;
+}
 export type LoadResult = { kind: 'ready'; snapshot: AppSnapshot } | { kind: 'empty' } |
   { kind: 'recovery_required'; reason: string; revision: number | null };
 
@@ -45,6 +52,7 @@ export class ExerciseTrackerDb extends Dexie {
   checkpointIndex!: EntityTable<CheckpointSummary, 'id'>;
   recoverySources!: EntityTable<RecoverySource, 'id'>;
   preferences!: EntityTable<Preference, 'key'>;
+  workoutBackupJobs!: EntityTable<WorkoutBackupJob, 'snapshotId'>;
 
   constructor(name = 'ExerciseTracker') {
     super(name, { chromeTransactionDurability: 'strict' });
@@ -68,6 +76,7 @@ export class ExerciseTrackerDb extends Dexie {
         await table.put(makeSnapshot(result.ok ? result.data : record.data, 1));
       }
     });
+    this.version(7).stores({ workoutBackupJobs: '&snapshotId, [userId+revision]' });
   }
 }
 
@@ -157,7 +166,7 @@ export async function commitAppData(data: AppData, expectedRevision: number | nu
   if (!validation.ok) throw new TypeError('Data validation failed; the saved record was not changed.');
   if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER)) throw new TypeError('Invalid revision.');
   const next = makeSnapshot(data, (expectedRevision ?? 0) + 1);
-  await offlineDb.transaction('rw', [offlineDb.appData, offlineDb.checkpoints, offlineDb.checkpointIndex, offlineDb.recoverySources, offlineDb.preferences], async (tx) => {
+  await offlineDb.transaction('rw', [offlineDb.appData, offlineDb.checkpoints, offlineDb.checkpointIndex, offlineDb.recoverySources, offlineDb.preferences, offlineDb.workoutBackupJobs], async (tx) => {
     const previous = await offlineDb.appData.get(data.userId);
     if (revisionOf(previous) !== expectedRevision) throw new StorageConflictError();
     if (previous && isPinned(reason)) await archive(tx, data.userId, `before-${reason}`, previous);
@@ -177,7 +186,14 @@ export async function commitAppData(data: AppData, expectedRevision: number | nu
       await offlineDb.checkpointIndex.put({ id: previous.snapshotId!, userId: previous.userId, revision: previous.revision,
         createdAt: previous.updatedAt, pinned: isPinned(reason), reason, planName: previous.data.template.name, sessionCount: previous.data.sessions.length });
     }
+    if (previous?.snapshotId) {
+      const job = await offlineDb.workoutBackupJobs.get(previous.snapshotId);
+      if (job) await offlineDb.workoutBackupJobs.put({ ...job, snapshot: previous as AppSnapshot });
+    }
     await offlineDb.appData.put(next);
+    if (reason === 'workout') {
+      await offlineDb.workoutBackupJobs.put({ snapshotId: next.snapshotId, userId: next.userId, revision: next.revision });
+    }
     if (['initialise', 'import', 'reset', 'restore'].includes(reason)) {
       await offlineDb.preferences.put({ key: 'remote-approved', value: false });
       // A new restore/reset lineage cannot prune the previous installation's
@@ -195,6 +211,27 @@ export async function commitAppData(data: AppData, expectedRevision: number | nu
     }
   });
   return next;
+}
+
+export function workoutBackupKeys(userId: string): Promise<string[]> {
+  return offlineDb.workoutBackupJobs.where('[userId+revision]').between([userId, 0], [userId, Number.MAX_SAFE_INTEGER], true, true).primaryKeys();
+}
+
+export async function retainPendingWorkoutBackups(userId: string): Promise<void> {
+  await offlineDb.transaction('rw', offlineDb.workoutBackupJobs, async () => {
+    const keys = await workoutBackupKeys(userId);
+    await offlineDb.workoutBackupJobs.bulkDelete(keys.slice(0, -2));
+  });
+}
+
+export async function readWorkoutBackup(userId: string, id: string): Promise<AppSnapshot | undefined> {
+  return offlineDb.transaction('r', [offlineDb.appData, offlineDb.workoutBackupJobs], async () => {
+    const job = await offlineDb.workoutBackupJobs.get(id);
+    if (!job || job.userId !== userId) return undefined;
+    const record = job.snapshot ?? await offlineDb.appData.get(userId);
+    if (record?.snapshotId !== id || record.revision !== job.revision || !record.checksum) throw new Error('Workout backup revision could not be opened.');
+    return record as AppSnapshot;
+  });
 }
 
 export async function listCheckpoints(userId: string): Promise<CheckpointSummary[]> {

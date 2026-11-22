@@ -3,6 +3,7 @@ import type {
   AppData,
   BandColour,
   MetricMode,
+  Modifier,
   RestEvent,
   SessionSet,
   TemplateDay,
@@ -10,6 +11,7 @@ import type {
   TemplateSet,
   WorkoutSession,
 } from '../domain/types';
+import { MAX_NOTE_LENGTH, MAX_REST_SECONDS, validModifierValue } from '../domain/modifiers';
 
 type RecordValue = Record<string, unknown>;
 
@@ -25,7 +27,7 @@ export interface AppDataValidationOptions {
 export type AppDataValidationResult = { ok: true; data: AppData } | { ok: false; error: string };
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
-const METRIC_MODES = new Set<MetricMode>(['weighted_reps', 'timed_hold', 'band_reps']);
+const METRIC_MODES = new Set<MetricMode>(['weighted_reps', 'timed_hold', 'band_reps', 'other']);
 const MAX_SESSIONS = 100_000;
 
 function isRecord(value: unknown): value is RecordValue {
@@ -125,6 +127,12 @@ function validateSetValues(
   options: { target: boolean; allowMissingTargetReps: boolean; allowLegacySideFields: boolean },
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
+  if (mode === 'other') {
+    return Object.keys(value).some((key) => key !== 'modifiers' && value[key] !== undefined &&
+      !(key === 'bandColourIds' && Array.isArray(value[key]) && value[key].length === 0))
+      ? `${path} contains values that are not valid for Other.` : undefined;
+  }
+  if (value.modifiers !== undefined) return `${path}.modifiers requires Other.`;
 
   if (!options.allowLegacySideFields && (value.leftReps !== undefined || value.rightReps !== undefined)) {
     return `${path} contains retired left/right rep values.`;
@@ -186,6 +194,10 @@ function validateProgression(
   allowLegacySideFields: boolean,
 ): string | undefined {
   if (!isRecord(value)) return `${path} must be an object.`;
+  if (mode === 'other') {
+    return Object.keys(value).length === 1 && isRecord(value.modifiers) && Object.keys(value.modifiers).length > 0
+      ? undefined : `${path} must contain proposed modifier targets.`;
+  }
   const progression = value;
   const progressionKeys = new Set([
     'weightKg',
@@ -268,6 +280,11 @@ function validateTemplateExercise(
     stringError(value.name, `${path}.name`, 'an exercise name') ??
     (!METRIC_MODES.has(value.mode as MetricMode) ? `${path}.mode is not a supported exercise mode.` : undefined) ??
     optionalBooleanError(value.tracksSides, `${path}.tracksSides`) ??
+    (value.restSeconds === undefined ? undefined : finiteNumberError(value.restSeconds, `${path}.restSeconds`, { integer: true, minimum: 0, maximum: MAX_REST_SECONDS })) ??
+    (value.notes === undefined || (typeof value.notes === 'string' && value.notes.length <= MAX_NOTE_LENGTH &&
+      ![...value.notes].some((character) => character.charCodeAt(0) === 127 || (character.charCodeAt(0) < 32 && character !== '\n' && character !== '\t')))
+      ? undefined : `${path}.notes must be valid text.`) ??
+    validateModifierDefinitions(value.modifiers, value.mode as MetricMode, `${path}.modifiers`) ??
     arrayError(value.sets, `${path}.sets`, 100);
   if (baseError) return baseError;
   if (value.mode === 'timed_hold' && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
@@ -277,6 +294,10 @@ function validateTemplateExercise(
   for (let index = 0; index < sets.length; index += 1) {
     const error = validateTemplateSet(sets[index], `${path}.sets[${index}]`, value.mode as MetricMode, knownBandIds, options);
     if (error) return error;
+    if (value.mode === 'other') {
+      const modifierError = validateModifierValues((sets[index] as TemplateSet).target.modifiers, value.modifiers as Modifier[] | undefined, `${path}.sets[${index}].target.modifiers`);
+      if (modifierError) return modifierError;
+    }
   }
   const typedSets = sets as TemplateSet[];
   return duplicateError(
@@ -288,6 +309,30 @@ function validateTemplateExercise(
     `${path}.sets`,
     'set number',
   );
+}
+
+function validateModifierDefinitions(value: unknown, mode: MetricMode, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (mode !== 'other') return `${path} requires Other.`;
+  if (!Array.isArray(value) || value.length > 2) return `${path} must contain at most two modifiers.`;
+  for (const field of value) {
+    if (!isRecord(field)) return `${path} must contain modifier definitions.`;
+    const error = idError(field.id, `${path}.id`) ?? stringError(field.label, `${path}.label`, 'a modifier label');
+    if (error) return error;
+    if (field.type !== 'number' && field.type !== 'text') return `${path}.type must be number or text.`;
+  }
+  return duplicateError((value as Modifier[]).map((field) => field.id), path, 'modifier ID');
+}
+
+function validateModifierValues(value: unknown, fields: Modifier[] | undefined, path: string, allowClear = false): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return `${path} must be an object.`;
+  for (const [id, entry] of Object.entries(value)) {
+    const field = fields?.find((candidate) => candidate.id === id);
+    if (!field) return `${path} references an unknown modifier.`;
+    if (!(allowClear && entry === null) && !validModifierValue(field.type, entry)) return `${path} contains an invalid ${field.type} value.`;
+  }
+  return undefined;
 }
 
 function validateTemplateDay(
@@ -489,6 +534,13 @@ function validateSession(
     if (snapshot.exercises.indexOf(snapshotExercise) !== set.exerciseIndex) return `${path}.sets[${index}].exerciseIndex does not match the session snapshot.`;
     if (snapshotExercise.mode !== set.mode) return `${path}.sets[${index}].mode does not match the session snapshot.`;
     if (snapshotExercise.name !== set.exerciseName) return `${path}.sets[${index}].exerciseName does not match the session snapshot.`;
+    if (set.mode === 'other') {
+      const modifierPath = `${path}.sets[${index}]`;
+      const error = validateModifierValues(set.target.modifiers, snapshotExercise.modifiers, `${modifierPath}.target.modifiers`) ??
+        validateModifierValues(set.actual.modifiers, snapshotExercise.modifiers, `${modifierPath}.actual.modifiers`) ??
+        validateModifierValues(set.proposedNextTarget?.modifiers, snapshotExercise.modifiers, `${modifierPath}.proposedNextTarget.modifiers`, true);
+      if (error) return error;
+    }
     const snapshotSet = snapshotExercise.sets.find((item) => item.id === set.templateSetId);
     if (!snapshotSet) return `${path}.sets[${index}].templateSetId is not present in the session snapshot.`;
     if (snapshotSet.setNumber !== set.setNumber) return `${path}.sets[${index}].setNumber does not match the session snapshot.`;

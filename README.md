@@ -6,7 +6,7 @@ Existing public deployment: [stixape.github.io/ExerciseTracker](https://stixape.
 
 ## Features
 
-- Monday–Saturday workout plans; weighted, timed and band exercises.
+- Today's workout in one screen. Plan supports weighted, band, timed and custom exercises, with per-exercise rest and notes.
 - Editable targets, active workout selection, reviewed next targets and optional rest countdowns.
 - Per-exercise progress, personal bests, charts and recorded session details.
 - Band reordering and history-preserving archive.
@@ -18,7 +18,7 @@ Existing public deployment: [stixape.github.io/ExerciseTracker](https://stixape.
 
 Browser storage is not permanently durable. Installation and persistent-storage permission do not provide recovery after clearing data or losing a device. Device checkpoints share that failure boundary.
 
-Use Settings → Backup and recovery to download a JSON file and select the saved file again to verify it, or connect a supported backup folder. Automatic folder backups run while the app is open; access may need reconnecting. Only independently verified copies establish a recovery point. CSV cannot restore the whole application.
+Use Settings → Backup and recovery to connect a supported device folder. Saving a completed workout writes a verified JSON backup and keeps the two newest automatic copies. If folder access is unavailable, download a JSON file and reselect it to verify the copy. CSV is available for session analysis.
 
 An empty/unreadable store opens recovery controls instead of silently writing defaults. Imports preview the plan/session counts and require confirmation. Restore receives a new local revision; reset preserves checkpoints, original sources and independent files.
 

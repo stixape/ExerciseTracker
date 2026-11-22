@@ -26,6 +26,7 @@ const JSON_DATA_MIGRATIONS: Readonly<Record<number, JsonDataMigration>> = {
   2: (data) => structuredClone(data),
   3: (data) => structuredClone(data),
   4: (data) => structuredClone(data),
+  5: (data) => data,
 };
 
 type LegacySetValues = SetValues & { leftReps?: number; rightReps?: number };
@@ -218,7 +219,10 @@ export function parseJsonImport(raw: string, userId: string): JsonImportResult {
   } catch {
     return { ok: false, error: 'Import file is not valid JSON.' };
   }
+  return restoreJsonExport(parsed, userId);
+}
 
+export function restoreJsonExport(parsed: unknown, userId: string): JsonImportResult {
   if (!isObject(parsed)) return { ok: false, error: 'Import file must contain an ExerciseTracker export object.' };
   if (!Number.isSafeInteger(parsed.version)) return { ok: false, error: 'Import file must contain a whole-number version.' };
   if (!('data' in parsed)) return { ok: false, error: 'Import file does not contain ExerciseTracker data.' };
@@ -229,12 +233,12 @@ export function parseJsonImport(raw: string, userId: string): JsonImportResult {
   }
 
   const sourceVersion = parsed.version as number;
-  if (sourceVersion === 5) {
+  if (sourceVersion === 5 || sourceVersion === APP_DATA_EXPORT_VERSION) {
     const backup = parsed.backup;
     if (!isObject(backup) || typeof backup.snapshotId !== 'string' || !backup.snapshotId.trim() || backup.snapshotId.length > 256 ||
       !Number.isSafeInteger(backup.revision) || (backup.revision as number) < 0 || !isValidIsoDateTime(backup.savedAt) ||
       typeof parsed.checksum !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.checksum) ||
-      backupChecksum(parsed.data as AppData, backup as unknown as BackupIdentity) !== parsed.checksum) {
+      backupChecksum(parsed.data as AppData, backup as unknown as BackupIdentity, sourceVersion) !== parsed.checksum) {
       return { ok: false, error: 'Backup integrity check failed. The file is incomplete or has changed.' };
     }
   }

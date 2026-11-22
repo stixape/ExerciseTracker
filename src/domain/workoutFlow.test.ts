@@ -135,4 +135,22 @@ describe('focused workout flow helpers', () => {
 
     expect(stageSetProgression(timed, { seconds: 60 }).proposedNextTarget).toEqual({ seconds: 60 });
   });
+
+  it('changes or clears Other targets while ignoring fields replaced during an active workout', () => {
+    const template = createDefaultTemplate();
+    const exercise = template.days[0].exercises[0];
+    exercise.mode = 'other';
+    exercise.modifiers = [{ id: 'grip', label: 'Grip', type: 'text' }, { id: 'balance', label: 'Balance', type: 'number' }];
+    exercise.sets = [{ ...exercise.sets[0], target: { modifiers: { grip: 'Wide', balance: 0 } } }];
+    const session = createSessionFromDay(template.days[0]);
+    const set = session.sets[0];
+    expect(set.actual).toEqual({});
+    const staged = stageSetProgression(set, { modifiers: { grip: null, balance: -1.5 } });
+    const applied = applySetProgression(template, session, staged, staged.proposedNextTarget);
+    expect(applied.days[0].exercises[0].sets[0].target.modifiers).toEqual({ balance: -1.5 });
+    exercise.modifiers = [{ id: 'new-grip', label: 'Grip', type: 'text' }, { id: 'balance', label: 'Balance', type: 'text' }];
+    exercise.sets[0].target = { modifiers: { 'new-grip': 'Neutral', balance: 'Steady' } };
+    const afterReplacement = applySetProgression(template, session, staged, staged.proposedNextTarget);
+    expect(afterReplacement.days[0].exercises[0].sets[0].target.modifiers).toEqual({ 'new-grip': 'Neutral', balance: 'Steady' });
+  });
 });

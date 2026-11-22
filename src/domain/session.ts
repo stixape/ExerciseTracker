@@ -1,11 +1,12 @@
 import { createId } from './ids';
-import type { ActiveRest, RestEvent, SessionSet, SetValues, TemplateDay, WorkoutSession } from './types';
+import type { ActiveRest, AppData, RestEvent, SessionSet, SetValues, TemplateDay, WorkoutSession } from './types';
 import { getNextIncompleteSet, getRestDurationSeconds, isFinalSet } from './rest';
 
 function cloneSetValues(values: SetValues): SetValues {
   return {
     ...values,
     bandColourIds: [...(values.bandColourIds ?? [])],
+    ...(values.modifiers ? { modifiers: { ...values.modifiers } } : {}),
   };
 }
 
@@ -20,7 +21,7 @@ export function createSessionFromDay(day: TemplateDay): WorkoutSession {
       setNumber: set.setNumber,
       mode: exercise.mode,
       target: cloneSetValues(set.target),
-      actual: cloneSetValues(set.target),
+      actual: exercise.mode === 'other' ? {} : cloneSetValues(set.target),
     })),
   );
 
@@ -42,10 +43,7 @@ export function completeSet(session: WorkoutSession, setId: string, actual: SetV
       set.id === setId
         ? {
             ...set,
-            actual: {
-              ...actual,
-              bandColourIds: [...(actual.bandColourIds ?? [])],
-            },
+            actual: cloneSetValues(actual),
             completedAt: new Date().toISOString(),
           }
         : set,
@@ -67,12 +65,30 @@ export function completeSessionIfDone(session: WorkoutSession): WorkoutSession {
   return { ...session, completedAt: new Date().toISOString() };
 }
 
+export function updateExerciseNotes(data: AppData, dayId: string, exerciseId: string, notes?: string): AppData {
+  function updateDay(day: TemplateDay) {
+    if (day.id !== dayId || !day.exercises.some((exercise) => exercise.id === exerciseId && exercise.notes !== notes)) return day;
+    return { ...day, exercises: day.exercises.map((exercise) => exercise.id === exerciseId ? { ...exercise, notes } : exercise) };
+  }
+  const days = data.template.days.map(updateDay);
+  const active = data.activeWorkout;
+  const snapshot = active && updateDay(active.session.snapshot);
+  if (days.every((day, index) => day === data.template.days[index]) && snapshot === active?.session.snapshot) return data;
+  return {
+    ...data,
+    template: { ...data.template, days },
+    activeWorkout: active && snapshot ? { ...active, session: { ...active.session, snapshot } } : active,
+  };
+}
+
 export function createActiveRest(session: WorkoutSession, completedSetId: string): ActiveRest | undefined {
   const completedSet = session.sets.find((set) => set.id === completedSetId);
   if (!completedSet || isFinalSet(session, completedSetId)) return undefined;
 
+  const durationSeconds = session.snapshot.exercises[completedSet.exerciseIndex]?.restSeconds ??
+    getRestDurationSeconds(completedSet.exerciseIndex, true);
+  if (!durationSeconds) return undefined;
   const now = Date.now();
-  const durationSeconds = getRestDurationSeconds(completedSet.exerciseIndex, true);
   const nextSet = getNextIncompleteSet(session, completedSetId) ?? getNextIncompleteSet(session);
 
   return {

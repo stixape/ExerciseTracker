@@ -1,4 +1,12 @@
-export type MetricMode = 'weighted_reps' | 'timed_hold' | 'band_reps';
+export type MetricMode = 'weighted_reps' | 'timed_hold' | 'band_reps' | 'other';
+
+export interface Modifier {
+  id: string;
+  label: string;
+  type: 'number' | 'text';
+}
+
+export type ModifierValue = number | string;
 
 export interface BandColour {
   id: string;
@@ -13,6 +21,7 @@ export interface SetValues {
   reps?: number;
   seconds?: number;
   bandColourIds?: string[];
+  modifiers?: Record<string, ModifierValue>;
 }
 
 export interface TemplateSet {
@@ -25,6 +34,9 @@ export interface TemplateExercise {
   id: string;
   name: string;
   mode: MetricMode;
+  restSeconds?: number;
+  notes?: string;
+  modifiers?: Modifier[];
   sets: TemplateSet[];
 }
 
@@ -40,6 +52,8 @@ export interface PlannedSetProgression {
   reps?: number;
   seconds?: number;
   bandColourIds?: string[];
+  /** Null clears a target; an absent key leaves it alone. */
+  modifiers?: Record<string, ModifierValue | null>;
 }
 
 export interface WorkoutTemplate {

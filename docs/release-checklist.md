@@ -64,6 +64,7 @@ See `offline-support.md` for the cache lifecycle and first-visit boundary.
 
 - Run npm run verify with the pinned toolchain. The same built artifact must pass desktop/mobile origin-loss restoration, stale-window protection, invalid drafts and previous-worker/schema upgrade tests.
 - In a disposable physical Android Edge/Chrome profile, verify installation, folder selection, permission revocation/reconnection, download/re-selection, full browser-storage loss and offline restore. Use synthetic records; never clear an existing workout profile.
+- Complete three synthetic workouts in the selected folder. Verify that the newest two automatic files restore, that the oldest is removed, and that plan edits and discarded workouts produce no automatic exports.
 - Verify saving/saved/failed states during quota/write failure and rescue export. Confirm import/reset cannot accept intervening edits while replacement is pending.
 - Confirm original legacy records remain exportable after migration, including failed business-data validation. Do not fix failures by writing defaults.
 - Confirm archived bands and removed exercises retain readable session values.

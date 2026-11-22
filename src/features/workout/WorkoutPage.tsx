@@ -1,50 +1,32 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Check, ChevronRight, Clock3, Pause, Play, RotateCcw, SkipForward, TimerReset, Trash2 } from 'lucide-react';
-import { EmptyState, PageTitle } from '../../components/PageTitle';
-import { getTemplateDayForToday } from '../../domain/calendar';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Check, Clock3, Pause, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
+import { weekdayName } from '../../domain/calendar';
 import { formatDuration } from '../../domain/rest';
-import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet } from '../../domain/session';
-import type { ActiveRest, BandColour, SessionSet, SetValues, TemplateDay, WorkoutSession } from '../../domain/types';
+import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet, updateExerciseNotes } from '../../domain/session';
+import type { ActiveRest, BandColour, Modifier, SessionSet, SetValues, WorkoutSession } from '../../domain/types';
+import { changeModifierValue, modifierValue } from '../../domain/modifiers';
 import { validateSetValues } from '../../domain/validation';
 import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, stageSetProgression, type PlannedSetProgression } from '../../domain/workoutFlow';
 import { playRestAlarm, primeAlarmAudio } from '../../lib/alarm';
 import { formatBandNames, formatSetActual } from '../../lib/workoutFormatting';
 import { useTracker } from '../../app/TrackerContext';
 import { ValidatedInput } from '../../components/ValidatedInput';
+import { ExerciseNotes } from '../../components/ExerciseNotes';
+import { ModifierInput } from '../../components/ModifierInput';
 
 export function WorkoutPage() {
-  const { dayId } = useParams();
-  const { data, saveData } = useTracker();
+  const { data, saveData, status } = useTracker();
   const navigate = useNavigate();
+  const [finishingSessionId, setFinishingSessionId] = useState<string>();
   const activeWorkout = data.activeWorkout;
-  const scheduledDay = getTemplateDayForToday(data.template);
-  const day = dayId
-    ? data.template.days.find((item) => item.id === dayId)
-    : activeWorkout
-      ? data.template.days.find((item) => item.id === activeWorkout.session.templateDayId) ?? activeWorkout.session.snapshot
-      : scheduledDay;
-  const routeActiveWorkout = !dayId || activeWorkout?.session.templateDayId === dayId ? activeWorkout : undefined;
-  const session = routeActiveWorkout?.session;
-  const selectedSet = session?.sets.find((set) => set.id === routeActiveWorkout?.selectedSetId && !set.completedAt);
+  const session = activeWorkout?.session;
+  const selectedSet = session?.sets.find((set) => set.id === activeWorkout?.selectedSetId && !set.completedAt);
   const currentSet = selectedSet ?? (session ? getCurrentSessionSet(session) : undefined);
   const completedCount = session?.sets.filter((set) => set.completedAt).length ?? 0;
 
   useScreenWakeLock(Boolean(session && !session.completedAt));
 
-  function startDay(targetDay: TemplateDay) {
-    if (!targetDay.exercises.length || !targetDay.exercises.some((exercise) => exercise.sets.length)) return;
-
-    if (data.activeWorkout && data.activeWorkout.session.templateDayId !== targetDay.id) {
-      const replace = window.confirm(`Discard the ${data.activeWorkout.session.label} workout in progress and start ${targetDay.label}?`);
-      if (!replace) return;
-    }
-
-    const session = createSessionFromDay(targetDay);
-    saveData((current) => ({ ...current, activeWorkout: { session } }));
-    primeAlarmAudio();
-    navigate('/workout');
-  }
 
   function updateActual(setId: string, actual: SetValues) {
     saveData((current) => {
@@ -98,7 +80,12 @@ export function WorkoutPage() {
 
   function completeWorkoutSet(set: SessionSet) {
     const invalid = document.querySelector<HTMLInputElement>('.focused-workout-screen input[aria-invalid="true"]');
-    if (invalid) { invalid.reportValidity(); return; }
+    if (invalid) {
+      const panel = invalid.closest('details');
+      if (panel) panel.open = true;
+      invalid.reportValidity();
+      return;
+    }
     if (!data.settings.hideRestTimes) primeAlarmAudio();
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
@@ -186,15 +173,14 @@ export function WorkoutPage() {
   }
 
   function pauseWorkout() {
-    navigate('/');
+    navigate('/workout');
   }
 
-  function discardWorkout() {
+  async function discardWorkout() {
     if (!session) return;
     const confirmed = window.confirm(`Discard the ${session.label} workout in progress? Completed sets in this workout will not be saved.`);
     if (!confirmed) return;
-    saveData((current) => ({ ...current, activeWorkout: undefined }));
-    navigate('/');
+    await saveData((current) => ({ ...current, activeWorkout: undefined }));
   }
 
   function restartWorkout() {
@@ -203,14 +189,15 @@ export function WorkoutPage() {
     if (!confirmed) return;
     const latestDay = data.template.days.find((item) => item.id === session.templateDayId) ?? session.snapshot;
     if (!latestDay.exercises.length || !latestDay.exercises.some((exercise) => exercise.sets.length)) return;
-    saveData((current) => ({ ...current, activeWorkout: { session: createSessionFromDay(latestDay) } }));
+    saveData((current) => ({ ...current, activeWorkout: { session: createSessionFromDay({ ...latestDay, label: weekdayName(latestDay.weekday) }) } }));
     primeAlarmAudio();
   }
 
   async function saveCompletedWorkout() {
-    if (!session?.completedAt) return;
-    const saved = await saveData((current) => {
-      if (!current.activeWorkout?.session.completedAt) return current;
+    if (!session?.completedAt || !session.sets.length) return;
+    setFinishingSessionId(session.id);
+    await saveData((current) => {
+      if (!current.activeWorkout?.session.completedAt || current.activeWorkout.session.id !== session.id) return current;
       const completedSession = current.activeWorkout.session;
       const template = applySessionProgressions(current.template, completedSession, current.bandColours.map((band) => band.id));
       return {
@@ -220,86 +207,11 @@ export function WorkoutPage() {
         activeWorkout: undefined,
       };
     }, 'workout');
-    if (saved) navigate('/progress');
-  }
-
-  if (!session && day) {
-    const setCount = day.exercises.reduce((total, exercise) => total + exercise.sets.length, 0);
-    const canStart = day.exercises.length > 0 && setCount > 0;
-    return (
-      <div className="page-stack">
-        <PageTitle eyebrow="Workout preview" title={day.label} text="Review the plan. Nothing is recorded until you choose Start workout." />
-
-        {activeWorkout && activeWorkout.session.templateDayId !== day.id && (
-          <section className="status-strip">
-            <TimerReset size={22} />
-            <div>
-              <strong>Workout in progress</strong>
-              <span>{activeWorkout.session.label}</span>
-            </div>
-            <button type="button" className="ghost-button" onClick={() => navigate(`/workout/${activeWorkout.session.templateDayId}`)}>
-              Resume
-            </button>
-          </section>
-        )}
-
-        <section className="section-block">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Selected day</p>
-              <h2>{day.label}</h2>
-            </div>
-            {canStart && (
-              <button className="primary-button" type="button" onClick={() => startDay(day)}>
-                <Play size={18} />
-                Start workout
-              </button>
-            )}
-          </div>
-          {canStart ? (
-            <div className="day-list">
-              {day.exercises.map((exercise, index) => (
-                <div className="day-row static-row" key={exercise.id}>
-                  <span>{exercise.name}</span>
-                  <small>
-                    Exercise {index + 1} · {exercise.sets.length} {exercise.sets.length === 1 ? 'set' : 'sets'}
-                  </small>
-                  <span />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-workout-recovery">
-              <EmptyState title="This workout is empty" text="Add an exercise and at least one set before starting." />
-              <button className="secondary-button" type="button" onClick={() => navigate('/plan')}>
-                Edit plan
-              </button>
-            </div>
-          )}
-        </section>
-      </div>
-    );
   }
 
   if (!session) {
-    return (
-      <div className="page-stack">
-        <PageTitle
-          eyebrow="Workout"
-          title={scheduledDay ? 'Choose a day' : 'Rest day'}
-          text={scheduledDay ? 'Review a planned day before starting.' : 'Nothing is scheduled today. You can still choose another planned workout.'}
-        />
-        <div className="day-list">
-          {data.template.days.map((templateDay) => (
-            <button key={templateDay.id} className="day-row" type="button" onClick={() => navigate(`/workout/${templateDay.id}`)}>
-              <span>{templateDay.label}</span>
-              <small>{templateDay.exercises.length} exercises</small>
-              <ChevronRight size={18} />
-            </button>
-          ))}
-        </div>
-      </div>
-    );
+    const saved = finishingSessionId && data.sessions.some((item) => item.id === finishingSessionId);
+    return <Navigate replace to={saved ? '/progress' : '/workout'} />;
   }
 
   if (activeWorkout?.activeRest && !data.settings.hideRestTimes) {
@@ -335,6 +247,7 @@ export function WorkoutPage() {
         session={session}
         bandColours={data.bandColours}
         onSave={saveCompletedWorkout}
+        saving={status === 'saving'}
         onUndo={(setId) => undoCompletedSet(setId)}
         onRestart={restartWorkout}
         onDiscard={discardWorkout}
@@ -351,6 +264,7 @@ export function WorkoutPage() {
       bandColours={data.bandColours}
       onActualChange={(actual) => updateActual(currentSet.id, actual)}
       onProgressionChange={(progression) => updateProgression(currentSet.id, progression)}
+      onSaveNotes={(notes) => saveData((current) => updateExerciseNotes(current, session.templateDayId, currentSet.exerciseId, notes))}
       onComplete={() => completeWorkoutSet(currentSet)}
       onChooseExercise={chooseExercise}
       onPause={pauseWorkout}
@@ -438,6 +352,7 @@ function WorkoutSummary({
   session,
   bandColours,
   onSave,
+  saving,
   onUndo,
   onRestart,
   onDiscard,
@@ -445,6 +360,7 @@ function WorkoutSummary({
   session: WorkoutSession;
   bandColours: BandColour[];
   onSave: () => void;
+  saving: boolean;
   onUndo: (setId: string) => void;
   onRestart: () => void;
   onDiscard: () => void;
@@ -476,24 +392,27 @@ function WorkoutSummary({
         )}
 
         <div className="summary-set-list" aria-label="Completed sets">
-          {session.sets.map((set) => (
-            <div className="summary-set-row" key={set.id}>
-              <div>
-                <strong>
-                  {set.exerciseName} · Set {set.setNumber}
-                </strong>
-                <span>{formatSetActual(set, bandColours)}</span>
-                {set.proposedNextTarget && <small>{formatProposedTarget(set, bandColours)}</small>}
+          {session.sets.map((set) => {
+            const exercise = session.snapshot.exercises[set.exerciseIndex];
+            return (
+              <div className="summary-set-row" key={set.id}>
+                <div>
+                  <strong>
+                    {set.exerciseName} · Set {set.setNumber}
+                  </strong>
+                  <span>{formatSetActual(set, bandColours, exercise?.modifiers)}</span>
+                  {set.proposedNextTarget && <small>{formatProposedTarget(set, bandColours, exercise?.modifiers)}</small>}
+                </div>
+                <button className="ghost-button" type="button" onClick={() => onUndo(set.id)} aria-label={`Undo ${set.exerciseName} set ${set.setNumber}`}>
+                  Undo
+                </button>
               </div>
-              <button className="ghost-button" type="button" onClick={() => onUndo(set.id)} aria-label={`Undo ${set.exerciseName} set ${set.setNumber}`}>
-                Undo
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="summary-save-actions">
-          <button className="complete-button" type="button" onClick={onSave}>
+          <button className="complete-button" type="button" onClick={onSave} disabled={saving}>
             <Check size={18} aria-hidden="true" />
             Save workout
           </button>
@@ -504,7 +423,7 @@ function WorkoutSummary({
   );
 }
 
-function formatProposedTarget(set: SessionSet, bandColours: BandColour[]): string | undefined {
+function formatProposedTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[]): string | undefined {
   const proposal = set.proposedNextTarget;
   if (!proposal) return undefined;
   const parts: string[] = [];
@@ -512,6 +431,10 @@ function formatProposedTarget(set: SessionSet, bandColours: BandColour[]): strin
   if (proposal.seconds !== undefined) parts.push(`${proposal.seconds}s`);
   if (proposal.bandColourIds !== undefined) parts.push(formatBandNames(proposal.bandColourIds, bandColours));
   if (proposal.reps !== undefined) parts.push(`${proposal.reps} reps`);
+  for (const field of modifiers ?? []) {
+    const value = modifierValue(proposal.modifiers, field.id);
+    if (value !== undefined) parts.push(`${field.label}: ${value ?? 'Clear target'}`);
+  }
   return parts.length ? `Next time: ${parts.join(' × ')}` : undefined;
 }
 
@@ -571,7 +494,7 @@ function RestScreen({
         {nextSet && (
           <>
             <strong>Set {nextSet.setNumber}</strong>
-            <span>{formatSetTarget(nextSet, bandColours)}</span>
+            <span>{formatSetTarget(nextSet, bandColours, session.snapshot.exercises[nextSet.exerciseIndex]?.modifiers)}</span>
           </>
         )}
       </div>
@@ -593,6 +516,7 @@ function ActiveSetScreen({
   bandColours,
   onActualChange,
   onProgressionChange,
+  onSaveNotes,
   onComplete,
   onChooseExercise,
   onPause,
@@ -606,6 +530,7 @@ function ActiveSetScreen({
   bandColours: BandColour[];
   onActualChange: (values: SetValues) => void;
   onProgressionChange: (progression?: PlannedSetProgression) => void;
+  onSaveNotes: (notes?: string) => Promise<boolean>;
   onComplete: () => void;
   onChooseExercise: (exerciseId: string) => void;
   onPause: () => void;
@@ -613,6 +538,7 @@ function ActiveSetScreen({
   onRestart: () => void;
   onUndoLast?: () => void;
 }) {
+  const exercise = session.snapshot.exercises[set.exerciseIndex];
   return (
     <section className="focused-workout-screen active-set-screen">
       <WorkoutControls onPause={onPause} onRestart={onRestart} onDiscard={onDiscard} />
@@ -624,7 +550,7 @@ function ActiveSetScreen({
             <p className="eyebrow">Current set</p>
             <h1>{set.exerciseName}</h1>
             <p>
-              Set {set.setNumber} of {session.snapshot.exercises[set.exerciseIndex]?.sets.length ?? set.setNumber}
+              Set {set.setNumber} of {exercise?.sets.length ?? set.setNumber}
             </p>
           </div>
           <span className="active-set-index" aria-label={`Set ${completedCount + 1} of ${session.sets.length} overall`}>
@@ -634,14 +560,16 @@ function ActiveSetScreen({
 
         <progress className="workout-progress" aria-label="Workout progress" value={completedCount} max={session.sets.length} />
 
-        <TargetSummary set={set} bandColours={bandColours} />
+        <TargetSummary set={set} bandColours={bandColours} modifiers={exercise?.modifiers} />
         <ActualSetEditor
           set={set}
           bandColours={bandColours}
+          modifiers={exercise?.modifiers}
           progression={set.proposedNextTarget ?? {}}
           onChange={onActualChange}
           onProgressionChange={onProgressionChange}
         />
+        <ExerciseNotes notes={exercise?.notes} onSave={onSaveNotes} />
 
         <div className="active-set-actions">
           <button className="complete-button focused-complete-button" type="button" onClick={onComplete}>
@@ -732,7 +660,16 @@ function ExercisePicker({
   );
 }
 
-function TargetSummary({ set, bandColours }: { set: SessionSet; bandColours: BandColour[] }) {
+function TargetSummary({ set, bandColours, modifiers }: { set: SessionSet; bandColours: BandColour[]; modifiers?: Modifier[] }) {
+  if (set.mode === 'other') {
+    return (
+      <section className="target-summary" aria-label="Target">
+        {(modifiers ?? []).map((field) => (
+          <ValueTile key={field.id} label={`Target ${field.label}`} value={String(modifierValue(set.target.modifiers, field.id) ?? '—')} />
+        ))}
+      </section>
+    );
+  }
   if (set.mode === 'timed_hold') {
     return (
       <section className="target-summary" aria-label="Target">
@@ -770,12 +707,14 @@ function ValueTile({ label, value }: { label: string; value: string }) {
 function ActualSetEditor({
   set,
   bandColours,
+  modifiers,
   progression,
   onChange,
   onProgressionChange,
 }: {
   set: SessionSet;
   bandColours: BandColour[];
+  modifiers?: Modifier[];
   progression: PlannedSetProgression;
   onChange: (values: SetValues) => void;
   onProgressionChange: (values?: PlannedSetProgression) => void;
@@ -786,6 +725,36 @@ function ActualSetEditor({
 
   function patchProgression(next: Partial<PlannedSetProgression>) {
     onProgressionChange({ ...progression, ...next });
+  }
+
+  if (set.mode === 'other') {
+    const fields = modifiers ?? [];
+    return (
+      <section className="actual-editor">
+        {fields.length > 0 && <div className="modifier-values">
+          {fields.map((field) => (
+            <ModifierInput key={field.id} field={field} label={`Performed ${field.label}`} value={modifierValue(set.actual.modifiers, field.id)}
+              onChange={(value) => patch({ modifiers: changeModifierValue(set.actual.modifiers, field.id, value) })} />
+          ))}
+        </div>}
+        <NextTargetPanel progression={progression} onClear={() => onProgressionChange(undefined)}>
+          {fields.map((field) => {
+            const target = modifierValue(set.target.modifiers, field.id);
+            const proposed = modifierValue(progression.modifiers, field.id);
+            return <div className="modifier-next-target" key={field.id}>
+              <ModifierInput field={field} label={`Next target ${field.label}`} value={proposed ?? undefined}
+                placeholder={proposed === null ? 'Target will be cleared' : target === undefined ? undefined : String(target)}
+                onChange={(value) => patchProgression({ modifiers: changeModifierValue(progression.modifiers, field.id, value) })} />
+              {target !== undefined && proposed !== null && <button className="small-button" type="button"
+                onClick={() => patchProgression({ modifiers: changeModifierValue(progression.modifiers, field.id, null) })}>
+                Clear {field.label} target
+              </button>}
+            </div>;
+          })}
+          {!fields.length && <p className="muted-text">Add modifiers in Plan to set a target.</p>}
+        </NextTargetPanel>
+      </section>
+    );
   }
 
   const repControls = <NumberStepper label="Performed reps" value={set.actual.reps} onChange={(reps) => patch({ reps })} />;

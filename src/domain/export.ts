@@ -3,6 +3,7 @@ import { APP_DATA_EXPORT_VERSION } from './dataVersion';
 import { createId } from './ids';
 import { validateAppData } from '../lib/appDataSchema';
 import { backupChecksum, type BackupIdentity } from '../lib/backupFormat';
+import { modifierValue } from './modifiers';
 
 function csvEscape(value: string | number | undefined): string {
   const rawText = value === undefined ? '' : String(value);
@@ -55,12 +56,20 @@ export function createCsvExport(sessions: WorkoutSession[]): string {
       'completed_at',
       'rest_seconds_after',
       'rest_skipped',
+      'modifier_1_label',
+      'modifier_1_target',
+      'modifier_1_actual',
+      'modifier_2_label',
+      'modifier_2_target',
+      'modifier_2_actual',
     ],
   ];
 
   for (const session of sessions) {
+    const rests = new Map(session.restEvents.map((rest) => [rest.afterSessionSetId, rest]));
     for (const set of session.sets) {
-      const rest = session.restEvents.find((event) => event.afterSessionSetId === set.id);
+      const rest = rests.get(set.id);
+      const fields = set.mode === 'other' ? session.snapshot.exercises[set.exerciseIndex]?.modifiers : undefined;
       rows.push([
         session.id,
         formatLocalCalendarDate(session.startedAt),
@@ -76,6 +85,9 @@ export function createCsvExport(sessions: WorkoutSession[]): string {
         set.completedAt ?? '',
         String(rest?.durationSeconds ?? ''),
         rest ? String(rest.skipped) : '',
+        ...[fields?.[0], fields?.[1]].flatMap((field) => field
+          ? [field.label, String(modifierValue(set.target.modifiers, field.id) ?? ''), String(modifierValue(set.actual.modifiers, field.id) ?? '')]
+          : ['', '', '']),
       ]);
     }
   }

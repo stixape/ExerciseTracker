@@ -3,13 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultAppData } from '../domain/sampleData';
 import { createJsonExport } from '../domain/export';
 import { parseJsonImport } from './localData';
-import { commitAppData, offlineDb } from './offlineDb';
+import { commitAppData, offlineDb, workoutBackupKeys } from './offlineDb';
 import { backupToFolder, folderBackupFilename, verifyBackupFile, type BackupDirectory, type BackupFile } from './fileBackups';
+import { flushWorkoutBackups } from './workoutBackups';
+import { completeSessionIfDone, completeSet, createSessionFromDay } from '../domain/session';
+import type { AppSnapshot } from './offlineDb';
 
 function directoryFixture() {
   const files = new Map<string, string>();
   let allowed = true;
   let failClose = false;
+  let failRemove = false;
   const directory: BackupDirectory = {
     kind: 'directory',
     queryPermission: async () => allowed ? 'granted' : 'denied',
@@ -28,12 +32,13 @@ function directoryFixture() {
       };
     },
     async *entries() { for (const name of files.keys()) yield [name, await directory.getFileHandle(name)] as [string, BackupFile]; },
-    async removeEntry(name) { files.delete(name); },
+    async removeEntry(name) { if (failRemove) throw new Error('Read-only file'); files.delete(name); },
   };
-  return { files, directory, deny: () => { allowed = false; }, fail: () => { failClose = true; } };
+  return { files, directory, deny: () => { allowed = false; }, fail: () => { failClose = true; },
+    failRemove: () => { failRemove = true; }, repair: () => { allowed = true; failClose = false; failRemove = false; } };
 }
 beforeEach(async () => { localStorage.clear(); await offlineDb.delete(); await offlineDb.open(); });
-afterEach(() => { vi.restoreAllMocks(); offlineDb.close(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); offlineDb.close(); });
 
 describe('independent folder files', () => {
   it('reads back, validates and records the exact committed revision', async () => {
@@ -102,5 +107,94 @@ describe('independent folder files', () => {
     if (!parsed.ok) throw new Error(parsed.error);
     const restored = await commitAppData(parsed.data, null, 'restore');
     expect(restored.data).toEqual(saved.data);
+  });
+});
+
+function connect(directory: BackupDirectory) {
+  vi.spyOn(offlineDb.preferences, 'get').mockResolvedValue({ key: 'backup-directory', value: directory });
+  let lock: Promise<unknown> = Promise.resolve();
+  vi.stubGlobal('navigator', { locks: { request: (_name: string, operation: () => Promise<unknown>) => {
+    const result = lock.then(operation);
+    lock = result.catch(() => undefined);
+    return result;
+  } } });
+}
+
+async function saveWorkout(previous: AppSnapshot) {
+  const session = createSessionFromDay(previous.data.template.days[0]);
+  const completed = completeSessionIfDone(session.sets.reduce((current, set) => completeSet(current, set.id, set.actual), session));
+  return commitAppData({ ...previous.data, sessions: [completed, ...previous.data.sessions] }, previous.revision, 'workout');
+}
+
+describe('automatic workout backup rotation', () => {
+  it('backs up exact commits in order across clock changes and serializes concurrent retries', async () => {
+    const mock = directoryFixture();
+    connect(mock.directory);
+    mock.files.set('manual.json', 'untouched');
+    const initial = await commitAppData(createDefaultAppData('local-user'), null);
+    expect(await flushWorkoutBackups('local-user')).toBe('idle');
+    const first = await saveWorkout(initial);
+    const second = await saveWorkout(first);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2025-01-01T10:00:00Z'));
+    let third;
+    try { third = await saveWorkout(second); }
+    finally { vi.useRealTimers(); }
+    const later = await commitAppData({ ...third.data, settings: { hideRestTimes: true } }, third.revision);
+    expect(await Promise.all([flushWorkoutBackups('local-user'), flushWorkoutBackups('local-user')])).toEqual(['verified', 'idle']);
+    expect(mock.files.get('manual.json')).toBe('untouched');
+    expect(mock.files.size).toBe(3);
+    const newest = [...mock.files.values()].find((raw) => raw.includes(third.snapshotId))!;
+    expect(await verifyBackupFile(newest, third)).toMatchObject({ snapshotId: third.snapshotId });
+    expect(parseJsonImport(newest, 'local-user')).toEqual({ ok: true, data: third.data });
+    expect(later.data.settings.hideRestTimes).toBe(true);
+    expect([...mock.files.values()].some((raw) => raw.includes(first.snapshotId))).toBe(false);
+    expect([...mock.files.values()].some((raw) => raw.includes(second.snapshotId))).toBe(true);
+    await offlineDb.delete();
+    await offlineDb.open();
+    const restored = parseJsonImport(newest, 'local-user');
+    expect(restored.ok && (await commitAppData(restored.data, null, 'restore')).data.sessions).toEqual(third.data.sessions);
+  });
+
+  it('keeps the newest pending versions while permission is revoked and retries on reconnection', async () => {
+    const mock = directoryFixture();
+    connect(mock.directory);
+    const initial = await commitAppData(createDefaultAppData('local-user'), null);
+    mock.deny();
+    const first = await saveWorkout(initial);
+    const second = await saveWorkout(first);
+    const third = await saveWorkout(second);
+    expect(await flushWorkoutBackups('local-user')).toBe('reconnect');
+    expect(await workoutBackupKeys('local-user')).toEqual([second.snapshotId, third.snapshotId]);
+    expect(mock.files.size).toBe(0);
+    mock.repair();
+    expect(await flushWorkoutBackups('local-user')).toBe('verified');
+    expect(await workoutBackupKeys('local-user')).toEqual([]);
+    expect(mock.files.size).toBe(2);
+  });
+
+  it('preserves the previous backups across write and cleanup failures and safely retries both', async () => {
+    const mock = directoryFixture();
+    connect(mock.directory);
+    const initial = await commitAppData(createDefaultAppData('local-user'), null);
+    const first = await saveWorkout(initial);
+    const second = await saveWorkout(first);
+    expect(await flushWorkoutBackups('local-user')).toBe('verified');
+    const previousFiles = [...mock.files.keys()];
+    const third = await saveWorkout(second);
+    mock.fail();
+    expect(await flushWorkoutBackups('local-user')).toBe('failed');
+    expect(previousFiles.every((file) => mock.files.has(file))).toBe(true);
+    expect(await workoutBackupKeys('local-user')).toEqual([third.snapshotId]);
+    mock.repair();
+    mock.failRemove();
+    expect(await flushWorkoutBackups('local-user')).toBe('cleanup');
+    expect(previousFiles.every((file) => mock.files.has(file))).toBe(true);
+    const afterWrite = mock.files.size;
+    mock.repair();
+    expect(await flushWorkoutBackups('local-user')).toBe('verified');
+    expect(mock.files.size).toBe(afterWrite - 1);
+    expect(previousFiles.filter((file) => mock.files.has(file))).toHaveLength(1);
+    expect([...mock.files.values()].filter((raw) => raw.includes(third.snapshotId))).toHaveLength(1);
   });
 });

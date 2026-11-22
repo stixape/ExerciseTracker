@@ -6,12 +6,12 @@ ExerciseTracker works offline. Browser storage is disposable: installation and a
 
 1. Open Settings → Backup and recovery. Download a JSON backup and keep it outside browser storage, for example in Documents. CSV is not a full backup.
 2. Select that saved file with **Verify saved backup**. Download initiation alone is not proof of a saved file. The verified revision and time appear separately from the current local revision.
-3. Where available, choose a backup folder. The app writes dated JSON files, closes them, reads them back and verifies their checksum. Automatic backup runs while the app is open, after completed sets/workout saves and settled changes. Permission loss, disk errors and interruptions can prevent it.
+3. Where available, choose a backup folder. After **Save workout** succeeds, the app writes that revision as JSON, reads it back and verifies the checksum. The app shows workout backup status separately from the local save. Keep the app open while the file is written.
 4. Keep another copy off the device if device loss matters. Optional remote backup is described in [sync-strategy.md](sync-strategy.md).
 
-Folder support is feature-detected; it must be tested on the actual Android browser. Unsupported browsers retain download/verification controls and a reminder when the current revision lacks an independent copy. A lost directory handle does not delete files: reconnect the folder or select a JSON file again.
+Folder support is feature-detected. If access is lost, reopen the app or reconnect the folder in Settings to retry. During an outage the app keeps the two most recent pending workout revisions. Use the manual JSON download and verification controls on browsers without folder access. The actual Android browser still needs the device checks in the release checklist.
 
-Folder retention keeps 20 recent successful versions plus one per day for 30 stored days. Protected pre-replacement copies are retained until deliberate manual cleanup. Only recognised, validated ExerciseTracker files outside that retention set are deleted, after a fresh verified copy exists. The just-verified copy is always retained, including after a clock change. Unknown, interrupted and corrupt files are left alone; retry writes a separate file rather than overwriting a damaged attempt. Backup files contain readable workout records; choose their location accordingly. Checksums detect accidental changes, not malicious forgery or an untrusted backup source.
+Automatic workout retention keeps the two newest verified workout files and deletes the oldest only after verifying a replacement. Folder sequence numbers handle clock changes. On-demand folder files use the previous 20 recent plus 30 daily policy, with protected pre-replacement copies kept until deliberate manual cleanup. Rotation preserves unknown, interrupted and corrupt files. Backup files contain readable workout records, so choose their location accordingly.
 
 ## Restore after loss
 
@@ -20,7 +20,7 @@ Folder retention keeps 20 recent successful versions plus one per day for 30 sto
 3. On **Restore or start ExerciseTracker**, select a JSON backup, review its plan/session counts and confirm **Restore this backup**. File restoration works offline once the shell is cached.
 4. Reopen offline and check the plan, history and active workout. Reconnect the backup folder and verify the new local revision.
 
-Versions 1–4 remain importable. Version 5 adds snapshot identity, source revision/time and a checksum. Restore creates a new local revision; it never rolls the local counter backward. File reads have no arbitrary 25 MB limit smaller than a valid export, but browser memory and schema collection limits still apply. A file that cannot be read/validated leaves the existing data untouched.
+Version 6 includes per-exercise rest, notes and Other modifiers. Versions 1–5 remain importable, with checksum verification for v5 and v6. Restore creates a new local revision. Browser memory and schema collection limits still apply. A file that cannot be read or validated leaves the existing data intact.
 
 ## When saving fails
 

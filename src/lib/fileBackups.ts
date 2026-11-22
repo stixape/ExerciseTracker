@@ -1,7 +1,8 @@
 import { createJsonExport } from '../domain/export';
 import { createId } from '../domain/ids';
+import { APP_DATA_EXPORT_VERSION } from '../domain/dataVersion';
 import { checksum } from './backupFormat';
-import { parseJsonImport } from './localData';
+import { restoreJsonExport } from './localData';
 import { offlineDb, retainedCheckpointIds, type AppSnapshot } from './offlineDb';
 
 export interface BackupFile {
@@ -40,18 +41,35 @@ export async function disconnectBackupFolder(): Promise<void> {
 }
 
 export async function verifyBackupFile(raw: string, expected?: AppSnapshot): Promise<VerifiedFileBackup> {
-  const result = parseJsonImport(raw, 'local-user');
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error('The backup file could not be verified.'); }
+  const result = restoreJsonExport(parsed, expected?.userId ?? 'local-user');
   if (!result.ok) throw new Error('The backup file could not be verified.');
-  const envelope = JSON.parse(raw) as { version: number; backup?: { snapshotId: string; revision: number; savedAt: string } };
-  if (envelope.version !== 5 || !envelope.backup) throw new Error('This older backup can be restored, but cannot identify a current saved revision.');
-  if (expected && (envelope.backup.snapshotId !== expected.snapshotId || checksum(result.data) !== expected.checksum)) throw new Error('The file does not match the saved revision.');
+  const envelope = parsed as { version: number; backup?: { snapshotId: string; revision: number; savedAt: string } };
+  if ((envelope.version !== 5 && envelope.version !== APP_DATA_EXPORT_VERSION) || !envelope.backup) throw new Error('This older backup can be restored, but cannot identify a current saved revision.');
+  if (expected && (envelope.backup.snapshotId !== expected.snapshotId || envelope.backup.revision !== expected.revision ||
+    envelope.backup.savedAt !== expected.updatedAt || checksum(result.data) !== expected.checksum)) throw new Error('The file does not match the saved revision.');
   return { ...envelope.backup, verifiedAt: new Date().toISOString() };
 }
 
-async function writeVerified(directory: BackupDirectory, snapshot: AppSnapshot, pinned: boolean) {
+export async function requireFolderPermission(directory: BackupDirectory) {
   if (directory.queryPermission && await directory.queryPermission({ mode: 'readwrite' }) !== 'granted') {
     throw new Error('Reconnect the backup folder to grant file access again.');
   }
+}
+
+export async function writeSnapshotFile(handle: BackupFile, snapshot: AppSnapshot): Promise<VerifiedFileBackup> {
+  const writer = await handle.createWritable();
+  try {
+    await writer.write(createJsonExport(snapshot.data, { snapshotId: snapshot.snapshotId, revision: snapshot.revision, savedAt: snapshot.updatedAt }));
+    await writer.close();
+  } catch (error) { await writer.abort?.().catch(() => undefined); throw error; }
+  return verifyBackupFile(await (await handle.getFile()).text(), snapshot);
+}
+
+async function writeVerified(directory: BackupDirectory, snapshot: AppSnapshot, pinned: boolean) {
+  await requireFolderPermission(directory);
   let name = folderBackupFilename(snapshot, pinned);
   let handle: BackupFile | undefined;
   try {
@@ -69,12 +87,7 @@ async function writeVerified(directory: BackupDirectory, snapshot: AppSnapshot, 
     }
   }
   handle ??= await directory.getFileHandle(name, { create: true });
-  const writer = await handle.createWritable();
-  try {
-    await writer.write(createJsonExport(snapshot.data, { snapshotId: snapshot.snapshotId, revision: snapshot.revision, savedAt: snapshot.updatedAt }));
-    await writer.close();
-  } catch (error) { await writer.abort?.().catch(() => undefined); throw error; }
-  return { verified: await verifyBackupFile(await (await handle.getFile()).text(), snapshot), name };
+  return { verified: await writeSnapshotFile(handle, snapshot), name };
 }
 
 async function prune(directory: BackupDirectory, newlyVerifiedName: string) {

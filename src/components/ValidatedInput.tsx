@@ -10,13 +10,22 @@ type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'> &
 export function ValidatedInput({ value, onValue, optional = false, whole = false, ...props }: Props) {
   const [draft, setDraft] = useState(String(value ?? ''));
   const [previous, setPrevious] = useState(value);
-  if (value !== previous) { setPrevious(value); setDraft(String(value ?? '')); }
+  const [badInput, setBadInput] = useState(false);
+  if (value !== previous) { setPrevious(value); setDraft(String(value ?? '')); setBadInput(false); }
   const numeric = props.type === 'number';
-  const valid = draft === '' ? optional : numeric ? Number.isFinite(Number(draft)) && Number(draft) >= Number(props.min ?? 0) && (!whole || Number.isInteger(Number(draft))) : Boolean(draft.trim()) && draft.length <= 500;
+  function isValid(text: string) {
+    if (text === '') return optional;
+    if (!numeric) return Boolean(text.trim()) && text.length <= 500;
+    const number = Number(text);
+    return Number.isFinite(number) && number >= Number(props.min ?? -Infinity) &&
+      number <= Number(props.max ?? Infinity) && (!whole || Number.isInteger(number));
+  }
+  const valid = isValid(draft) && !badInput;
   return <input {...props} value={draft} aria-invalid={!valid} required={!optional} onChange={(event) => {
     const next = event.target.value;
     setDraft(next);
-    const acceptable = next === '' ? optional : numeric ? Number.isFinite(Number(next)) && Number(next) >= Number(props.min ?? 0) && (!whole || Number.isInteger(Number(next))) : Boolean(next.trim()) && next.length <= 500;
+    setBadInput(event.target.validity.badInput);
+    const acceptable = isValid(next) && !event.target.validity.badInput;
     event.target.setCustomValidity(acceptable ? '' : 'Enter a valid value. This unfinished edit has not been saved.');
     if (acceptable) onValue(next);
   }} />;

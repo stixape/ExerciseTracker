@@ -50,6 +50,12 @@ Status: accepted and implemented, 2026-10-26.
 Evidence: src/domain/bands.ts, src/domain/types.ts and band/history regression tests.
 Archive bands instead of removing their references from completed snapshots. Existing selections remain readable; new choices omit archived bands. Session details use the recorded snapshot, independently of the current plan. Previously erased values cannot be reconstructed without an older backup; this change does not fabricate them.
 
+## ET-009 · Verify and rotate completed-workout backups
+
+**Accepted, 2026-11-22.** The requested Workout landing starts today's scheduled workout. Successful workout saves queue the exact completed revision and write to the device folder when permission is available. Two verified automatic files cover the latest workout saves. Folder-file rotation starts with the new workout files. Existing downloads, protected files and earlier folder backups keep their original recovery path. JSON v6 supports the new exercise data and supersedes ET-006's portable export version. IndexedDB v7 adds the workout backup queue while preserving existing records.
+
+Evidence lives in [workout backup code](src/lib/workoutBackups.ts), [schema validation](src/lib/appDataSchema.ts) and the [recovery guide](docs/recovery.md).
+
 ## Recording future work
 
 Add a dated entry for a material new decision, include rationale actually discussed and evidence, and explicitly label proposed, deferred, rejected or superseded ideas. Retain experiment locations only when they exist.

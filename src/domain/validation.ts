@@ -52,6 +52,10 @@ export function validatePlannedSetProgression(
   knownBandColourIds?: Iterable<string>,
 ): string[] {
   const errors: string[] = [];
+  if (mode === 'other') {
+    return Object.keys(progression).every((key) => key === 'modifiers') ? [] : ['Other supports modifier targets.'];
+  }
+  if (progression.modifiers !== undefined) errors.push('Modifiers require Other.');
   if (progression.reps !== undefined && !isWholeNonNegative(progression.reps)) {
     errors.push('Next reps must be a whole number of 0 or higher.');
   }

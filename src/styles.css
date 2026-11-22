@@ -216,42 +216,6 @@ small {
   padding-bottom: 0;
 }
 
-.top-bar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: calc(0.7rem + env(safe-area-inset-top)) 1rem 0.7rem;
-  background: var(--topbar-bg);
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(14px);
-}
-
-.brand-link {
-  color: var(--ink);
-  text-decoration: none;
-  font-weight: 800;
-}
-
-.brand-link .brand-mark {
-  width: 2.2rem;
-  height: 2.2rem;
-}
-
-.storage-pill {
-  flex: 0 0 auto;
-  padding: 0.5rem 0.7rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 0.82rem;
-  font-weight: 800;
-  color: var(--primary);
-}
-
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -305,6 +269,117 @@ small {
 
 .overview-band p {
   color: var(--hero-muted);
+}
+
+.tracker-ready:has(.workout-landing-shell) {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+}
+
+.workout-landing-shell,
+.workout-landing-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.workout-landing-main {
+  width: 100%;
+}
+
+.overview-band.workout-landing {
+  flex: 1;
+  min-width: 0;
+  grid-template: auto minmax(0, 1fr) auto / minmax(0, 1fr);
+  align-items: stretch;
+  gap: clamp(0.55rem, 2vh, 1.1rem);
+  padding: clamp(0.7rem, 2.5vh, 1.5rem);
+}
+
+.today-plan {
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+}
+
+.today-plan > li {
+  padding: 0.6rem 0.3rem;
+  border-top: 1px solid var(--hero-action-border);
+}
+
+.today-plan ul {
+  margin: 0.3rem 0 0;
+  padding: 0;
+  color: var(--hero-muted);
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.today-action {
+  grid-row: 3;
+}
+
+.today-action > :is(button, a) {
+  width: 100%;
+}
+
+.exercise-notes,
+.modifier-values,
+.modifier-definitions,
+.modifier-next-target {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.exercise-notes label,
+.modifier-definition label,
+.modifier-values label,
+.modifier-next-target label {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.exercise-notes textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.modifier-definition {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5rem, auto) auto;
+  align-items: end;
+  gap: 0.45rem;
+}
+
+.modifier-definition select {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.recorded-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .eyebrow {
@@ -374,8 +449,9 @@ small {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
+  margin-bottom: 1rem;
 }
 
 .metric-tile,
@@ -1157,7 +1233,7 @@ small {
   bottom: 0;
   left: 0;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.2rem;
   padding: 0.45rem 0.45rem calc(0.45rem + env(safe-area-inset-bottom));
   background: var(--nav-bg);
@@ -1241,7 +1317,6 @@ small {
   }
 
   .main-content,
-  .top-bar,
   .demo-banner {
     padding-left: 7.2rem;
   }
@@ -1271,10 +1346,6 @@ small {
 
   .add-band-form {
     grid-template-columns: 1fr;
-  }
-
-  .top-bar {
-    align-items: flex-start;
   }
 
 }
@@ -1426,6 +1497,10 @@ select,
 
 .plan-exercise-body {
   padding: 1rem;
+}
+
+.plan-exercise-body > :is(.inline-label, .modifier-definitions, .exercise-notes) {
+  margin-bottom: 0.9rem;
 }
 
 .exercise-name-field {
@@ -1864,6 +1939,7 @@ select,
 /* Recovery controls remain outside the disabled editing fieldset. */
 .app-interaction { display: contents; border: 0; padding: 0; margin: 0; min-width: 0; }
 .save-status, .backup-reminder { padding: .4rem 1rem; background: #e6f1ee; color: #174f48; font-size: .85rem; overflow-wrap: anywhere; }
+.workout-backup-status { padding: .4rem 1rem; background: var(--surface); color: var(--ink); font-size: .85rem; overflow-wrap: anywhere; }
 .backup-reminder { background: #fff4d7; color: #654c13; }
 .recovery-screen { max-width: 48rem; margin: 2rem auto; padding: 1rem; }
 .backup-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0; align-items: center; }

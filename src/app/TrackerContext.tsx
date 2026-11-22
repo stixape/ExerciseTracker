@@ -9,6 +9,7 @@ import { CheckpointBrowser } from '../components/BackupPanel';
 import { RemoteBackupPanel } from '../components/RemoteBackupPanel';
 import { backupToFolder } from '../lib/fileBackups';
 import { backupToRemote, remoteConfiguration } from '../lib/remoteBackups';
+import { flushWorkoutBackups, workoutBackupMessage, type WorkoutBackupResult } from '../lib/workoutBackups';
 
 export const LOCAL_USER_ID = 'local-user';
 type SaveStatus = 'saved' | 'saving' | 'error' | 'conflict';
@@ -38,6 +39,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [backupError, setBackupError] = useState('');
+  const [workoutBackupStatus, setWorkoutBackupStatus] = useState<WorkoutBackupResult>('idle');
   const [independentlyBacked, setIndependentlyBacked] = useState(false);
   const [backupTick, setBackupTick] = useState(0);
   const reasonRef = useRef<CheckpointReason>('edit');
@@ -49,6 +51,8 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   const conflicted = useRef(false);
   const exclusive = useRef(false);
   const pending = useRef(0);
+  const finishingWorkout = useRef(false);
+  const retrying = useRef(false);
   const channel = useRef<BroadcastChannel | undefined>(undefined);
   const initialLoad = useRef<Promise<LoadResult> | undefined>(undefined);
 
@@ -99,9 +103,9 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     async function refreshProtection() {
-      const [file, remote] = await Promise.all([offlineDb.preferences.get('last-file-backup'), offlineDb.preferences.get('last-remote-backup')]);
+      const [file, remote, workout] = await Promise.all([offlineDb.preferences.get('last-file-backup'), offlineDb.preferences.get('last-remote-backup'), offlineDb.preferences.get('last-workout-backup')]);
       const matches = (value: unknown) => Boolean(value && typeof value === 'object' && 'snapshotId' in value && value.snapshotId === snapshot?.snapshotId);
-      if (!cancelled) setIndependentlyBacked(Boolean(snapshot && (matches(file?.value) || matches(remote?.value))));
+      if (!cancelled) setIndependentlyBacked(Boolean(snapshot && (matches(file?.value) || matches(remote?.value) || matches(workout?.value))));
     }
     const trigger = () => setBackupTick((tick) => tick + 1);
     const refresh = () => { void refreshProtection().catch(() => undefined); };
@@ -110,8 +114,8 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
     window.addEventListener('backup-target-changed', trigger);
     window.addEventListener('online', trigger);
     const timer = snapshot ? window.setTimeout(async () => {
-      const results = await Promise.allSettled([backupToFolder(snapshot), backupToRemote(snapshot)]);
-      if (!cancelled) setBackupError(results.some((result) => result.status === 'rejected') ? 'An independent backup could not be verified. Your local save is intact. Reconnect your backup folder or remote account in Settings.' : '');
+      try { if (await backupToRemote(snapshot) && !cancelled) setBackupError(''); }
+      catch { if (!cancelled) setBackupError('A remote backup could not be verified. Your local save is intact. Reconnect your remote account in Settings.'); }
       await refreshProtection().catch(() => undefined);
     }, reasonRef.current === 'set' || reasonRef.current === 'workout' ? 0 : 1_000) : undefined;
     return () => {
@@ -122,6 +126,26 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('online', trigger);
     };
   }, [snapshot, backupTick]);
+
+  const ready = loadState?.kind === 'ready';
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    function run() {
+      function accept(result: WorkoutBackupResult) {
+        if (!cancelled && result !== 'idle') setWorkoutBackupStatus(result);
+      }
+      void flushWorkoutBackups(LOCAL_USER_ID).then(accept, () => accept('failed'));
+    }
+    run();
+    window.addEventListener('workout-committed', run);
+    window.addEventListener('backup-target-changed', run);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('workout-committed', run);
+      window.removeEventListener('backup-target-changed', run);
+    };
+  }, [ready]);
 
   const persist = useCallback((next: AppData, reason: CheckpointReason): Promise<boolean> => {
     pending.current++;
@@ -135,6 +159,11 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
         revisionRef.current = saved.revision;
         setSnapshot(saved);
         channel.current?.postMessage({ revision: saved.revision, snapshotId: saved.snapshotId });
+        if (reason === 'workout') {
+          setData(saved.data);
+          finishingWorkout.current = false;
+          window.dispatchEvent(new Event('workout-committed'));
+        }
         setError('');
         return true;
       } catch (failure) {
@@ -150,7 +179,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const saveData = useCallback((updater: (current: AppData) => AppData, reason: CheckpointReason = 'edit') => {
-    if (!dataRef.current || exclusive.current || blocked.current) return Promise.resolve(false);
+    if (!dataRef.current || exclusive.current || blocked.current || finishingWorkout.current) return Promise.resolve(false);
     const next = updater(dataRef.current);
     if (next === dataRef.current) return tail.current;
     if (!validateAppData(next).ok) {
@@ -158,7 +187,8 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
       return Promise.resolve(false);
     }
     dataRef.current = next;
-    setData(next);
+    if (reason === 'workout') finishingWorkout.current = true;
+    else setData(next);
     return persist(structuredClone(next), reason);
   }, [persist]);
 
@@ -212,10 +242,13 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const retrySave = useCallback(async () => {
-    if (!dataRef.current || exclusive.current || conflicted.current) return false;
-    await tail.current;
-    blocked.current = false;
-    return persist(structuredClone(dataRef.current), 'edit');
+    if (!dataRef.current || !blocked.current || exclusive.current || conflicted.current || retrying.current) return false;
+    retrying.current = true;
+    try {
+      await tail.current;
+      blocked.current = false;
+      return await persist(structuredClone(dataRef.current), finishingWorkout.current ? 'workout' : 'edit');
+    } finally { retrying.current = false; }
   }, [persist]);
 
   if (!loadState) return <main className="loading-screen" aria-busy="true"><h1>Loading ExerciseTracker</h1></main>;
@@ -236,16 +269,21 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
   </main>;
 
   return <TrackerContext.Provider value={{ data, snapshot, status, busy, saveData, replaceData, getBackupJson, retrySave }}>
-    <div className="save-status" role="status">{status === 'saved' ? 'Saved on this device · revision ' + snapshot?.revision : status === 'saving' ? 'Saving on this device…' : 'Changes are not saved'}</div>
-    {!independentlyBacked && <div className="backup-reminder">Independent backup needed. Keep a verified JSON file outside browser storage; backup controls are in Settings.</div>}
-    {backupError && <div className="backup-reminder" role="status">{backupError}</div>}
-    {error && <div className="storage-error-banner" role="alert">{error}
-      {status === 'error' && <button type="button" onClick={() => void retrySave()}>Retry save</button>}
-      {(status === 'error' || status === 'conflict') && <>
-        <button type="button" onClick={async () => { try { downloadTextFile('exercise-tracker-rescue-' + Date.now() + '.json', await getBackupJson(true), 'application/json'); } catch { setError('The pending data is invalid and cannot be exported as a restorable backup.'); } }}>Export unsaved changes</button>
-        <button type="button" onClick={() => { if (window.confirm('Reload saved data? Export unsaved changes first if you want to keep them.')) window.location.reload(); }}>Reload saved data</button>
-      </>}
-    </div>}
-    <fieldset className="app-interaction" disabled={busy || status === 'conflict' || status === 'error'} aria-busy={busy}>{children}</fieldset>
+    <div className="tracker-ready">
+      <div className="tracker-status">
+        <div className="save-status" role="status">{status === 'saved' ? 'Saved on this device · revision ' + snapshot?.revision : status === 'saving' ? 'Saving on this device…' : 'Changes are not saved'}</div>
+        {!independentlyBacked && <div className="backup-reminder">Independent backup needed. Keep a verified JSON file outside browser storage; backup controls are in Settings.</div>}
+        {backupError && <div className="backup-reminder" role="status">{backupError}</div>}
+        {workoutBackupStatus !== 'idle' && <div className="workout-backup-status" role="status">{workoutBackupMessage(workoutBackupStatus)}</div>}
+        {error && <div className="storage-error-banner" role="alert">{error}
+          {status === 'error' && <button type="button" onClick={() => void retrySave()}>Retry save</button>}
+          {(status === 'error' || status === 'conflict') && <>
+            <button type="button" onClick={async () => { try { downloadTextFile('exercise-tracker-rescue-' + Date.now() + '.json', await getBackupJson(true), 'application/json'); } catch { setError('The pending data is invalid and cannot be exported as a restorable backup.'); } }}>Export unsaved changes</button>
+            <button type="button" onClick={() => { if (window.confirm('Reload saved data? Export unsaved changes first if you want to keep them.')) window.location.reload(); }}>Reload saved data</button>
+          </>}
+        </div>}
+      </div>
+      <fieldset className="app-interaction" disabled={busy || status === 'conflict' || status === 'error'} aria-busy={busy}>{children}</fieldset>
+    </div>
   </TrackerContext.Provider>;
 }

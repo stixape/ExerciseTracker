@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { AppData } from '../domain/types';
+import { APP_DATA_EXPORT_VERSION } from '../domain/dataVersion';
 
 export interface BackupIdentity {
   snapshotId: string;
@@ -22,6 +23,6 @@ export function checksum(value: unknown): string {
   return bytesToHex(sha256(utf8ToBytes(canonicalJson(value))));
 }
 
-export function backupChecksum(data: AppData, identity: BackupIdentity): string {
-  return checksum({ version: 5, data, backup: identity });
+export function backupChecksum(data: AppData, identity: BackupIdentity, version = APP_DATA_EXPORT_VERSION): string {
+  return checksum({ version, data, backup: identity });
 }

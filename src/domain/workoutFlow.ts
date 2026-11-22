@@ -1,5 +1,6 @@
-import type { BandColour, PlannedSetProgression, SessionSet, WorkoutSession, WorkoutTemplate } from './types';
+import type { BandColour, Modifier, PlannedSetProgression, SessionSet, WorkoutSession, WorkoutTemplate } from './types';
 import { validatePlannedSetProgression } from './validation';
+import { changeModifierValue, formatModifierValues, modifierValue } from './modifiers';
 
 export type { PlannedSetProgression } from './types';
 
@@ -28,6 +29,8 @@ export function applySetProgression(
   if (errors.length) throw new RangeError(errors.join(' '));
   const nextTarget = progressionForMode(set, progression);
   if (!progressionChangesTarget(set, nextTarget)) return template;
+  const { modifiers: proposedModifiers, ...standardTarget } = nextTarget;
+  const recordedFields = set.mode === 'other' ? session.snapshot.exercises[set.exerciseIndex]?.modifiers : undefined;
 
   return {
     ...template,
@@ -37,18 +40,28 @@ export function applySetProgression(
       return {
         ...day,
         exercises: day.exercises.map((exercise) => {
-          if (exercise.id !== set.exerciseId) return exercise;
+          if (exercise.id !== set.exerciseId || exercise.mode !== set.mode) return exercise;
 
           return {
             ...exercise,
             sets: exercise.sets.map((templateSet) => {
               if (templateSet.id !== set.templateSetId) return templateSet;
+              if (set.mode === 'other') {
+                let modifiers = templateSet.target.modifiers;
+                for (const field of exercise.modifiers ?? []) {
+                  const value = modifierValue(proposedModifiers, field.id);
+                  if (value !== undefined && recordedFields?.some((recorded) => recorded.id === field.id && recorded.type === field.type)) {
+                    modifiers = changeModifierValue(modifiers, field.id, value ?? undefined);
+                  }
+                }
+                return { ...templateSet, target: { ...templateSet.target, modifiers } };
+              }
 
               return {
                 ...templateSet,
                 target: {
                   ...templateSet.target,
-                  ...nextTarget,
+                  ...standardTarget,
                   ...(nextTarget.bandColourIds ? { bandColourIds: [...nextTarget.bandColourIds] } : {}),
                 },
               };
@@ -98,7 +111,8 @@ export function applySessionProgressions(
   );
 }
 
-export function formatSetTarget(set: SessionSet, bandColours: BandColour[]): string {
+export function formatSetTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[]): string {
+  if (set.mode === 'other') return formatModifierValues(set.target, modifiers) || 'Open targets';
   if (set.mode === 'timed_hold') return `${set.target.seconds ?? 0} seconds`;
   const repsLabel = `${set.target.reps ?? 0} reps`;
   if (set.mode === 'band_reps') return `${formatBandNames(set.target.bandColourIds ?? [], bandColours)} x ${repsLabel}`;
@@ -115,6 +129,7 @@ function formatBandNames(ids: string[], bandColours: BandColour[]): string {
 }
 
 function isSetTargetMet(set: SessionSet): boolean {
+  if (set.mode === 'other') return true;
   if (set.mode === 'timed_hold') return (set.actual.seconds ?? 0) >= (set.target.seconds ?? 0);
   // Weight is numerically comparable; band colours are user-defined and have no
   // reliable strength ordering, so band progression is gated by reps alone.
@@ -129,6 +144,10 @@ function sameIds(left: string[], right: string[]): boolean {
 }
 
 function progressionForMode(set: SessionSet, progression: PlannedSetProgression): PlannedSetProgression {
+  if (set.mode === 'other') {
+    return { modifiers: Object.fromEntries(Object.entries(progression.modifiers ?? {}).filter(([id, value]) =>
+      (value ?? undefined) !== modifierValue(set.target.modifiers, id))) };
+  }
   if (set.mode === 'timed_hold') {
     return progression.seconds === undefined ? {} : { seconds: progression.seconds };
   }
@@ -149,6 +168,7 @@ function progressionForMode(set: SessionSet, progression: PlannedSetProgression)
 function progressionChangesTarget(set: SessionSet, progression: PlannedSetProgression): boolean {
   return Object.entries(progression).some(([key, value]) => {
     if (key === 'bandColourIds') return !sameIds(value as string[], set.target.bandColourIds ?? []);
+    if (key === 'modifiers') return Object.keys(progression.modifiers ?? {}).length > 0;
     return set.target[key as keyof typeof set.target] !== value;
   });
 }
