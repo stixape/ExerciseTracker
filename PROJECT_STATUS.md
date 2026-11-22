@@ -16,6 +16,11 @@ Updated 2026-11-22 on codex/workout-redesign from dcd30b5. The working tree and 
 
 See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instructions](docs/recovery.md), [audit and evidence limits](docs/reliability-audit.md), and [optional remote setup](docs/sync-strategy.md).
 
+## Pages deployment attempt on 2026-11-22
+
+- The user approved a one-time, non-force push of `5e46927` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` for https://stixape.github.io/ExerciseTracker/. GitHub confirmed that update. This consumed the approval for that commit.
+- [Pages run 45019588720](https://github.com/stixape/ExerciseTracker/actions/runs/45019588720) stopped at Chromium installation because Playwright 1.59.1 does not support the Ubuntu 26.04 `ubuntu-latest` runner. The deploy job was skipped. The verification job now uses `ubuntu-24.04` in the local follow-up, pending approval to push that commit.
+
 ## Verification performed on 2026-11-22
 
 - npm run verify passed with Node 24.19.0 and npm 11.17.0. It covered lint, 126 unit tests, the Pages build, 41 Chromium browser tests and offline verification. The desktop run skipped one mobile-only viewport case.
