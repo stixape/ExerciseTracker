@@ -25,6 +25,11 @@ See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instru
 - Desktop and mobile Chromium exercised ordered cue requests, interval rest with ordinary rest hidden, both pause states, skip rest, exercise handoff, reload catch-up, duplicate transition signals and recorded seconds in Progress. Unit tests covered zero and default rest, single-set completion, v7 active-state restore, v5/v6 checksums and CSV.
 - The offline verifier loaded and decoded the supplied MP3 with network and the HTTP cache disabled. The built worker precached 13 files. Physical Android audio and screen-lock behavior and the optional pgTAP checks remain pending.
 
+### Interval Pages release
+
+- The user approved a one-time, non-force push of `d50d6e7` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` for the public Pages site. GitHub confirmed the ref update. [Pages run 45066664799](https://github.com/stixape/ExerciseTracker/actions/runs/45066664799) passed verification and deployed that commit.
+- The [live app](https://stixape.github.io/ExerciseTracker/) served `index-CwNcNKkQ.js`. A fresh Chromium profile selected Interval in Plan, started its timer, reloaded the active interval offline and decoded the cached bell. The hosted MP3 matched the supplied file's SHA-256.
+
 ## Pages deployment on 2026-11-22
 
 - The user approved a one-time, non-force push of `5e46927` to `refs/heads/main` at `https://github.com/stixape/ExerciseTracker.git` for https://stixape.github.io/ExerciseTracker/. GitHub confirmed that update. This consumed the approval for that commit.
