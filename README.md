@@ -6,8 +6,8 @@ Existing public deployment: [stixape.github.io/ExerciseTracker](https://stixape.
 
 ## Features
 
-- Today's workout in one screen. Plan supports weighted, band, timed, interval and custom exercises, with per-exercise rest and notes.
-- Editable targets, active workout selection, reviewed next targets and optional rest countdowns.
+- Today's workout in one screen, with a completed state after saving. Plan gives each exercise shared targets, a set count, rest time and notes.
+- Individual set results with previous performances at matching settings, final-set Next time changes and optional rest countdowns.
 - Interval runs a full exercise from one start, with automatic work and rest, a bell between phases, and pause, resume and skip-rest controls.
 - Per-exercise progress, personal bests, charts and recorded session details.
 - Band reordering and history-preserving archive.
@@ -47,6 +47,8 @@ npm run benchmark:storage
 The release gate lints, runs unit tests, builds the Pages artifact once, then tests that same dist with desktop/mobile Chromium and the offline regression. Recovery tests clear IndexedDB, localStorage, caches and service workers in disposable profiles, reacquire the shell and restore a downloaded file offline. They also exercise stale clients and a previous service-worker/schema upgrade.
 
 The offline regression disables ordinary HTTP caching, checks all emitted assets were precached, preserves unrelated origin caches and compares saved data after reload. The benchmark uses only synthetic process-local fake IndexedDB; it does not establish Android disk performance. Optional SQL access tests are described in docs/sync-strategy.md.
+
+Set `EXERCISE_TRACKER_E2E_SLOW=1` when running the gate on a slow local browser host to allow longer startup and persistence waits.
 
 ## Offline delivery and deployment
 

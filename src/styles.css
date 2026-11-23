@@ -132,7 +132,6 @@ h2 {
 .workout-header,
 .workout-exercise-heading,
 .set-title,
-.set-editor-heading,
 .status-strip,
 .storage-pill,
 .export-actions,
@@ -325,6 +324,19 @@ small {
 
 .today-action > :is(button, a) {
   width: 100%;
+}
+
+.workout-completed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid var(--success-line);
+  border-radius: 8px;
+  background: var(--success-bg);
+  color: var(--primary);
+  font-weight: 800;
 }
 
 .exercise-notes,
@@ -581,31 +593,6 @@ small {
 
 .danger {
   color: var(--danger);
-}
-
-.set-grid {
-  display: grid;
-  gap: 0.75rem;
-  margin: 1rem 0;
-}
-
-.set-editor {
-  display: grid;
-  gap: 0.65rem;
-  min-width: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-soft);
-}
-
-.set-editor-heading {
-  justify-content: space-between;
-}
-
-.set-editor-heading .icon-button {
-  width: 1.95rem;
-  height: 1.95rem;
 }
 
 .value-editor {
@@ -909,10 +896,6 @@ small {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
-}
-
-.weighted-actual-editor {
-  grid-template-columns: 1fr;
 }
 
 .wheel-field {
@@ -1273,9 +1256,6 @@ small {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .set-grid {
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  }
 
   .exercise-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1336,8 +1316,7 @@ small {
     grid-template-columns: 1fr;
   }
 
-  .target-summary.two,
-  .weighted-actual-editor {
+  .target-summary.two {
     grid-template-columns: 1fr;
   }
 
@@ -1428,8 +1407,7 @@ select,
   min-height: 44px;
 }
 
-.icon-button,
-.set-editor-heading .icon-button {
+.icon-button {
   width: 44px;
   height: 44px;
 }
@@ -1493,11 +1471,9 @@ select,
 }
 
 .plan-exercise-body {
+  display: grid;
+  gap: 0.9rem;
   padding: 1rem;
-}
-
-.plan-exercise-body > :is(.inline-label, .modifier-definitions, .exercise-notes) {
-  margin-bottom: 0.9rem;
 }
 
 .exercise-name-field {
@@ -1661,19 +1637,6 @@ select,
   gap: 1rem;
 }
 
-.performed-fields {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.weighted-actual-editor {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.weighted-actual-editor > .eyebrow {
-  grid-column: 1 / -1;
-}
-
 .number-stepper {
   display: grid;
   gap: 0.4rem;
@@ -1762,14 +1725,6 @@ select,
   color: var(--primary);
   cursor: pointer;
   font-weight: 850;
-}
-
-.next-target-panel > summary span {
-  padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  background: var(--surface-muted);
-  color: var(--muted);
-  font-size: 0.72rem;
 }
 
 .next-target-panel > p {
@@ -1893,6 +1848,10 @@ select,
   min-width: 0;
 }
 
+.summary-set-row > .next-target-panel {
+  grid-column: 1 / -1;
+}
+
 .summary-set-row span,
 .summary-set-row small,
 .summary-save-actions p {
@@ -1924,7 +1883,6 @@ select,
 }
 
 @media (min-width: 520px) {
-  .weighted-actual-editor,
   .next-target-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

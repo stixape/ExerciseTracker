@@ -19,9 +19,10 @@ import { LOCAL_USER_ID, TrackerProvider, useTracker } from './app/TrackerContext
 import { EmptyState, PageTitle } from './components/PageTitle';
 import { calculateSetVolume, detectPlateaus, getPerformedRepCount } from './domain/analytics';
 import { archiveBandColour, reorderBandColours } from './domain/bands';
-import { getTemplateDayForToday, getTodayWeekday, weekdayName } from './domain/calendar';
+import { getTemplateDayForToday, getTodayWeekday, hasSavedWorkoutOn, localWorkoutDate, sessionWorkoutDate, weekdayName } from './domain/calendar';
 import { createCsvExport, downloadTextFile } from './domain/export';
 import { createId } from './domain/ids';
+import { MAX_EXERCISE_SETS, MAX_WORKOUT_SETS, replaceExerciseTarget, resizeExerciseSets } from './domain/plan';
 import { createDefaultAppData } from './domain/sampleData';
 import { createSessionFromDay, updateExerciseNotes } from './domain/session';
 import { changeModifierValue, MAX_REST_SECONDS, modifierValue } from './domain/modifiers';
@@ -44,6 +45,7 @@ import { ValidatedInput } from './components/ValidatedInput';
 import { ExerciseNotes } from './components/ExerciseNotes';
 import { ModifierInput } from './components/ModifierInput';
 import { TargetRangeInput } from './components/TargetRangeInput';
+import { WorkTimeInput } from './components/WorkTimeInput';
 import { formatActualReps, formatBandNames, formatPlannedSets, formatSetActual } from './lib/workoutFormatting';
 import { WorkoutPage } from './features/workout/WorkoutPage';
 
@@ -133,7 +135,9 @@ function WorkoutLanding() {
   const scheduledDay = getTemplateDayForToday(data.template, today);
   const active = data.activeWorkout?.session;
   const day = active?.snapshot ?? scheduledDay;
-  const canStart = Boolean(scheduledDay?.exercises.some((exercise) => exercise.sets.length));
+  const alreadySaved = hasSavedWorkoutOn(data.sessions, today);
+  const configurationIssue = scheduledDay && planStartIssue(scheduledDay);
+  const canStart = Boolean(scheduledDay?.exercises.length && !configurationIssue);
   const completed = active?.sets.filter((set) => set.completedAt).length;
 
   useEffect(() => {
@@ -157,23 +161,31 @@ function WorkoutLanding() {
   }, []);
 
   async function startToday() {
-    const currentDay = getTemplateDayForToday(data.template);
-    if (!currentDay?.exercises.some((exercise) => exercise.sets.length)) return;
     primeAlarmAudio();
-    const session = createSessionFromDay({ ...currentDay, label: weekdayName(currentDay.weekday) });
-    if (await saveData((current) => current.activeWorkout ? current : { ...current, activeWorkout: { session } })) {
-      navigate('/workout/active');
-    }
+    let openActive = false;
+    const saved = await saveData((current) => {
+      if (current.activeWorkout) {
+        openActive = true;
+        return current;
+      }
+      const now = new Date();
+      const currentDay = getTemplateDayForToday(current.template, now);
+      if (!currentDay?.exercises.length || planStartIssue(currentDay) || hasSavedWorkoutOn(current.sessions, now)) return current;
+      openActive = true;
+      const session = createSessionFromDay({ ...currentDay, label: weekdayName(currentDay.weekday) }, now);
+      return { ...current, activeWorkout: { session } };
+    });
+    if (saved && openActive) navigate('/workout/active');
   }
 
   return (
     <section className="overview-band workout-landing" aria-labelledby="today-heading">
       <header>
-        <p className="eyebrow">{active && day?.weekday !== todayWeekday ? 'Workout in progress' : 'Today'}</p>
+        <p className="eyebrow">{active && sessionWorkoutDate(active) !== localWorkoutDate(today) ? 'Workout in progress' : 'Today'}</p>
         <h1 id="today-heading">{day ? weekdayName(day.weekday) : 'Rest day'}</h1>
         {active && <p>{completed} of {active.sets.length} sets complete</p>}
         {!day && <p>{weekdayName(todayWeekday)} · Nothing is scheduled today.</p>}
-        {day && !active && !canStart && <p>Add an exercise to start today’s workout.</p>}
+        {day && !active && !alreadySaved && !canStart && <p>{configurationIssue ?? 'Add an exercise to start today’s workout.'}</p>}
       </header>
       {day && day.exercises.length > 0 && (
         <ol className="today-plan" aria-label="Planned exercises" tabIndex={0}>
@@ -190,6 +202,8 @@ function WorkoutLanding() {
           <button className="primary-button" type="button" onClick={() => navigate('/workout/active')}>
             <Play size={18} /> Resume workout
           </button>
+        ) : alreadySaved ? (
+          <p className="workout-completed" role="status"><Check size={20} aria-hidden="true" /> Workout Completed!</p>
         ) : canStart ? (
           <button className="primary-button" type="button" onClick={() => void startToday()}>
             <Play size={18} /> Start workout
@@ -198,6 +212,15 @@ function WorkoutLanding() {
       </footer>
     </section>
   );
+}
+
+function planStartIssue(day: TemplateDay): string | undefined {
+  if (day.exercises.some((exercise) => exercise.mode === 'band_reps' && !exercise.sets[0]?.target.bandColourIds?.length)) {
+    return 'Choose a band colour in Plan to start today’s workout.';
+  }
+  if (day.exercises.reduce((total, exercise) => total + exercise.sets.length, 0) > MAX_WORKOUT_SETS) {
+    return 'Reduce the number of sets in Plan to start today’s workout.';
+  }
 }
 
 function MetricTile({ label, value }: { label: string; value: number }) {
@@ -214,6 +237,7 @@ function PlanPage() {
   const [selectedDayId, setSelectedDayId] = useState(data.template.days[0]?.id ?? '');
   const [lastRemoved, setLastRemoved] = useState<{ dayId: string; exercise: TemplateExercise; index: number }>();
   const selectedDay = data.template.days.find((day) => day.id === selectedDayId) ?? data.template.days[0];
+  const daySetCount = selectedDay?.exercises.reduce((total, exercise) => total + exercise.sets.length, 0) ?? 0;
 
   function updateDay(dayId: string, updater: (day: TemplateDay) => TemplateDay) {
     saveData((current) => ({
@@ -234,7 +258,7 @@ function PlanPage() {
   }
 
   function addExercise() {
-    if (!selectedDay) return;
+    if (!selectedDay || daySetCount + 3 > MAX_WORKOUT_SETS) return;
     updateDay(selectedDay.id, (day) => ({
       ...day,
       exercises: [
@@ -318,6 +342,7 @@ function PlanPage() {
             key={exercise.id}
             exercise={exercise}
             exerciseIndex={exerciseIndex}
+            maxSets={Math.min(MAX_EXERCISE_SETS, exercise.sets.length + Math.max(0, MAX_WORKOUT_SETS - daySetCount))}
             bandColours={data.bandColours}
             onChange={(updater) => updateExercise(exercise.id, updater)}
             onSaveNotes={(notes) => saveData((current) => updateExerciseNotes(current, selectedDay.id, exercise.id, notes))}
@@ -326,7 +351,7 @@ function PlanPage() {
         ))}
       </div>
 
-      <button className="secondary-button" type="button" onClick={addExercise}>
+      <button className="secondary-button" type="button" onClick={addExercise} disabled={daySetCount + 3 > MAX_WORKOUT_SETS}>
         <Plus size={18} />
         Add exercise
       </button>
@@ -368,6 +393,7 @@ function getDefaultTargetForMode(mode: MetricMode, exerciseIndex: number, bandCo
 function PlanExerciseEditor({
   exercise,
   exerciseIndex,
+  maxSets,
   bandColours,
   onChange,
   onSaveNotes,
@@ -375,22 +401,21 @@ function PlanExerciseEditor({
 }: {
   exercise: TemplateExercise;
   exerciseIndex: number;
+  maxSets: number;
   bandColours: BandColour[];
   onChange: (updater: (exercise: TemplateExercise) => TemplateExercise) => void;
   onSaveNotes: (notes?: string) => Promise<boolean>;
   onRemove: () => void;
 }) {
   function changeMode(mode: MetricMode) {
-    onChange((current) => current.mode === mode ? current : ({
-      ...current,
-      mode,
-      modifiers: undefined,
-      sets: current.sets.map((set) => ({
-        ...set,
-        rangeMax: rangeMetric(current.mode) === rangeMetric(mode) ? set.rangeMax : undefined,
-        target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, set.target),
-      })),
-    }));
+    onChange((current) => {
+      if (current.mode === mode) return current;
+      const shared = current.sets[0];
+      return replaceExerciseTarget({ ...current, mode, modifiers: undefined }, {
+        rangeMax: rangeMetric(current.mode) === rangeMetric(mode) ? shared.rangeMax : undefined,
+        target: getDefaultTargetForMode(mode, exerciseIndex, bandColours, shared.target),
+      });
+    });
   }
 
   function addModifier() {
@@ -481,69 +506,20 @@ function PlanExerciseEditor({
           </div>
         )}
 
-        <div className="set-grid">
-          {exercise.sets.map((set) => (
-            <div className="set-editor" key={set.id}>
-              <div className="set-editor-heading">
-                <strong>Set {set.setNumber}</strong>
-                {exercise.sets.length > 1 && (
-                  <button
-                    type="button"
-                    className="icon-button danger"
-                    aria-label={`Remove set ${set.setNumber}`}
-                    onClick={() => {
-                      onChange((current) => current.sets.length <= 1 ? current : ({
-                        ...current,
-                        sets: current.sets
-                          .filter((item) => item.id !== set.id)
-                          .map((item, index) => ({
-                            ...item,
-                            setNumber: index + 1,
-                          })),
-                      }));
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-              </div>
-              <SetValueEditor
-                mode={exercise.mode}
-                modifiers={exercise.modifiers}
-                set={set}
-                bandColours={bandColours}
-                onChange={(updateSet) =>
-                  onChange((current) => ({
-                    ...current,
-                    sets: current.sets.map((item) => (item.id === set.id ? updateSet(item) : item)),
-                  }))
-                }
-              />
-            </div>
-          ))}
-        </div>
+        <SetValueEditor
+          mode={exercise.mode}
+          modifiers={exercise.modifiers}
+          set={exercise.sets[0]}
+          bandColours={bandColours}
+          onChange={(updateSet) => onChange((current) => replaceExerciseTarget(current, updateSet(current.sets[0])))}
+        />
 
+        <label className="compact-field">
+          Sets
+          <ValidatedInput type="number" inputMode="numeric" min={1} max={maxSets} whole commitOnBlur
+            value={exercise.sets.length} onValue={(value) => onChange((current) => resizeExerciseSets(current, Number(value)))} />
+        </label>
         <ExerciseNotes notes={exercise.notes} onSave={onSaveNotes} />
-        <button
-          className="small-button"
-          type="button"
-          onClick={() =>
-            onChange((current) => ({
-              ...current,
-              sets: [
-                ...current.sets,
-                {
-                  id: createId('template_set'),
-                  setNumber: current.sets.length + 1,
-                  target: getDefaultTargetForMode(current.mode, exerciseIndex, bandColours),
-                },
-              ],
-            }))
-          }
-        >
-          <Plus size={16} />
-          Add set
-        </button>
       </div>
     </details>
   );
@@ -581,12 +557,8 @@ function SetValueEditor({
 
   if (mode === 'interval') {
     return (
-      <label className="compact-field">
-        Time (minutes)
-        <ValidatedInput type="number" inputMode="decimal" min={0.5 / 60} max={MAX_INTERVAL_SECONDS / 60} step="any"
-          value={Number(((values.seconds ?? DEFAULT_INTERVAL_SECONDS) / 60).toFixed(4))}
-          commitOnBlur onValue={(value) => patch({ seconds: Math.round(Number(value) * 60) })} />
-      </label>
+      <WorkTimeInput label="Work Time (minutes)" seconds={values.seconds ?? DEFAULT_INTERVAL_SECONDS}
+        onValue={(seconds) => patch({ seconds })} />
     );
   }
 
@@ -1104,7 +1076,7 @@ function SettingsPage() {
         <div className="section-heading">
           <h2>Band colours</h2>
         </div>
-        <p className="muted-text band-order-help">Drag the handle to set the order used in plans and workouts.</p>
+        <p className="muted-text band-order-help">Order bands from lightest to strongest for Next time. A combination adds the ranks of its bands.</p>
         <div className="band-list">
           {data.bandColours.filter((band) => !band.archived).map((band) => (
             <div

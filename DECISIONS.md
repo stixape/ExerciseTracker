@@ -66,6 +66,12 @@ Evidence lives in [workout backup code](src/lib/workoutBackups.ts), [schema vali
 
 The app shows save failures and backup issues that require attention. Settings shows the local revision and latest verified backup.
 
+## ET-012 · Share planned targets and keep results per set
+
+**Accepted, 2026-11-23.** One target and count govern each exercise. Existing mixed plans adopt Set 1's targets and range. The v9 migration archives the original record and retains the exact queued-backup revision. Active and saved workout snapshots retain their recorded settings and results.
+
+Lock new starts on the workout's original local date after a successful save. Show the latest matching result per set, including older workouts when a recent setting differs. Stage proposals on the final set, with Interval work time available in review. Increases require all sets to meet their recorded targets. Eligible changes apply independently to every planned set. Settings orders bands from lightest to strongest and the ranks of combined bands add together.
+
 ## Recording future work
 
 Add a dated entry for a material new decision, include rationale actually discussed and evidence, and explicitly label proposed, deferred, rejected or superseded ideas. Retain experiment locations only when they exist.

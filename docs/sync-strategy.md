@@ -5,7 +5,7 @@ The default application stays local and account-free. The user approved implemen
 ## Data and trust model
 
 - Supabase Auth uses email sign-in links with PKCE. Account setup happens only after opt-in.
-- backup_snapshots stores immutable version-5 JSON envelopes, scoped by authenticated owner and device/restore stream.
+- backup_snapshots stores immutable checksummed JSON envelopes, scoped by authenticated owner and device/restore stream.
 - Inserts are idempotent and read back for checksum validation. Existing rows cannot be updated or deleted through ordinary client grants.
 - Server retention keeps 20 recent plus 30 daily versions per stream; protected copies remain. Provider infrastructure backup is separate and still needs an off-site operational strategy.
 - Restore validates, previews and explicitly replaces local data with a new revision. There is no automatic remote download, record merge or last-writer overwrite.
@@ -18,7 +18,7 @@ The default application stays local and account-free. The user approved implemen
 
 Prepare these steps only for an explicitly approved dedicated origin and Supabase project:
 
-1. Apply the migrations in [supabase/migrations](../supabase/migrations) to a private project. The Interval migration accepts checksummed v5, v6 and v7 backups. Never use a public bucket or a browser service-role/secret key.
+1. Apply the migrations in [supabase/migrations](../supabase/migrations) to a private project. The current policy accepts checksummed v5–v8 backups. Never use a public bucket or a browser service-role/secret key.
 2. Set Supabase Auth's site URL and allowlisted redirect URL to the dedicated origin's application settings route. Configure and verify email delivery. The app uses BASE_URL, which remains /ExerciseTracker/ unless separately changed.
 3. Run the local policy tests below and verify the same grants/policies in the intended project before release.
 4. Populate the public build variables in .env.example: exact VITE_BACKUP_APP_ORIGIN, HTTPS VITE_BACKUP_SUPABASE_URL and VITE_BACKUP_SUPABASE_PUBLISHABLE_KEY beginning sb_publishable_. Never commit a populated .env file. Vite variables are public.
@@ -38,7 +38,7 @@ supabase db reset
 supabase test db
 ```
 
-The checked-in local config, migrations and pgTAP assertions cover owner access, cross-account and anonymous denial, denied update/delete, account-scoped retention, protected versions, and v5–v7 compatibility. Use only synthetic accounts. Tests roll back their rows. Live SQL/email/auth behaviour must not be claimed verified without actually running against the configured service.
+The checked-in local config, migrations and pgTAP assertions cover owner access, cross-account and anonymous denial, denied update/delete, account-scoped retention, protected versions, and v5–v8 compatibility. Use only synthetic accounts. Tests roll back their rows. Live SQL/email/auth behaviour must not be claimed verified without actually running against the configured service.
 
 [Supabase RLS documentation](https://supabase.com/docs/guides/database/postgres/row-level-security) explains the owner policy and secret-key boundary. [Provider backup documentation](https://supabase.com/docs/guides/platform/backups) distinguishes infrastructure recovery from the user's retained snapshots.
 

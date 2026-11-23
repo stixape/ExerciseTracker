@@ -56,7 +56,11 @@ export function validatePlannedSetProgression(
   knownBandColourIds?: Iterable<string>,
 ): string[] {
   const errors: string[] = [];
-  if (mode === 'interval') return ['Interval does not support next-time targets.'];
+  if (mode === 'interval') {
+    return Object.keys(progression).length === 1 && isWholeNonNegative(progression.seconds) &&
+      progression.seconds >= 1 && progression.seconds <= MAX_INTERVAL_SECONDS
+      ? [] : ['Next work time must be between one second and 24 hours.'];
+  }
   if (mode === 'other') {
     return Object.keys(progression).every((key) => key === 'modifiers') ? [] : ['Other supports modifier targets.'];
   }

@@ -6,9 +6,12 @@ function fixture() {
   const data = createDefaultAppData('local-user');
   data.template.name = 'Recovery verification plan';
   const session = createSessionFromDay(data.template.days[0]);
+  const active = createSessionFromDay(data.template.days[1]);
+  delete session.workoutDate;
+  delete active.workoutDate;
   const completedAt = new Date(Date.parse(session.startedAt) + 60_000).toISOString();
   data.sessions = [{ ...session, completedAt, sets: session.sets.map((set) => ({ ...set, completedAt })) }];
-  data.activeWorkout = { session: createSessionFromDay(data.template.days[1]) };
+  data.activeWorkout = { session: active };
   data.settings.hideRestTimes = true;
   data.bandColours.push({ id: 'recovery-band', name: 'Recovery band', hex: '#123456', archived: true });
   return data;
@@ -129,13 +132,15 @@ test('schema v5 and an old worker cache upgrade without losing workout records',
     await navigator.serviceWorker.register('/ExerciseTracker/previous-worker.js', { scope: '/ExerciseTracker/' });
     await navigator.serviceWorker.ready;
   }, data);
+  expect(await page.evaluate(() => caches.keys())).toContain('exercise-tracker-previous-release');
   await page.goto('/ExerciseTracker/');
   await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
-  await offlineReady(page);
-  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL), { timeout: 15_000 })
-    .toMatch(/\/service-worker\.js$/);
+  await expect.poll(() => page.evaluate(async () => {
+    const worker = navigator.serviceWorker.controller;
+    return worker?.scriptURL.endsWith('/service-worker.js') && worker.state === 'activated' &&
+      !(await caches.keys()).includes('exercise-tracker-previous-release');
+  }), { timeout: 15_000 }).toBe(true);
   expect((await record(page)).data).toEqual(data);
-  await expect.poll(() => page.evaluate(() => caches.keys())).not.toContain('exercise-tracker-previous-release');
   await page.context().setOffline(true);
   await page.reload();
   await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();

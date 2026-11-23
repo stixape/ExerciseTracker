@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultTemplate, defaultBandColours } from './sampleData';
 import { createSessionFromDay } from './session';
+import type { WorkoutSession } from './types';
 import {
   applySessionProgressions,
-  applySetProgression,
   formatSetTarget,
   getCurrentSessionSet,
   getRepWheelMax,
   getWheelValues,
+  reviewExerciseProgression,
   stageSetProgression,
 } from './workoutFlow';
+
+const bandIds = defaultBandColours.map((band) => band.id);
+
+function completedFixture(template = createDefaultTemplate()) {
+  const session = createSessionFromDay(template.days[0]);
+  const completedAt = new Date().toISOString();
+  const completed: WorkoutSession = { ...session, completedAt, sets: session.sets.map((set) => ({ ...set, completedAt })) };
+  return { template, session: completed };
+}
 
 describe('focused workout flow helpers', () => {
   it('selects the first incomplete set in strict workout order', () => {
@@ -58,99 +68,70 @@ describe('focused workout flow helpers', () => {
     expect(getRepWheelMax({ ...session.sets[0], target: { ...session.sets[0].target, reps: 75 } })).toBe(75);
   });
 
-  it('updates the planned weight after a weighted target is met', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const set = { ...session.sets[0], actual: { ...session.sets[0].actual, reps: 5 } };
-    const updatedTemplate = applySetProgression(template, session, set, { weightKg: 62.5 });
-
-    expect(updatedTemplate.days[0].exercises[0].sets[0].target.weightKg).toBe(62.5);
-    expect(template.days[0].exercises[0].sets[0].target.weightKg).toBe(60);
+  it('applies final-set increases to all sets after saving a complete workout', () => {
+    const { template, session } = completedFixture();
+    session.sets[2] = stageSetProgression(session.sets[2], { weightKg: 62.5, reps: 6 }, bandIds);
+    expect(applySessionProgressions(template, { ...session, completedAt: undefined }, defaultBandColours)).toBe(template);
+    expect(applySessionProgressions(template, session, defaultBandColours).days[0].exercises[0].sets.map((set) => set.target))
+      .toMatchObject(Array(3).fill({ weightKg: 62.5, reps: 6 }));
+    expect(session.sets[2].target.weightKg).toBe(60);
+    expect(stageSetProgression(session.sets[2], { weightKg: undefined }, bandIds).proposedNextTarget).toBeUndefined();
   });
 
-  it('does not update the planned weight if the rep target was missed', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const set = { ...session.sets[0], actual: { ...session.sets[0].actual, reps: 4 } };
-    const updatedTemplate = applySetProgression(template, session, set, { weightKg: 62.5 });
-
-    expect(updatedTemplate.days[0].exercises[0].sets[0].target.weightKg).toBe(60);
+  it('blocks increases, applies decreases and ignores legacy proposals on earlier sets', () => {
+    const { template, session } = completedFixture();
+    const exercise = template.days[0].exercises[0];
+    session.sets[0] = { ...session.sets[0], actual: { weightKg: 60, reps: 4 }, proposedNextTarget: { weightKg: 50 } };
+    const final = stageSetProgression(session.sets[2], { weightKg: 65, reps: 4 }, bandIds);
+    session.sets[2] = final;
+    expect(reviewExerciseProgression(exercise, session, final, defaultBandColours))
+      .toEqual({ accepted: { reps: 4 }, blocked: ['Weight'] });
+    const updated = applySessionProgressions(template, session, defaultBandColours);
+    expect(updated.days[0].exercises[0].sets.map((set) => set.target)).toMatchObject(Array(3).fill({ weightKg: 60, reps: 4 }));
+    session.sets[0].actual.reps = 5;
+    expect(reviewExerciseProgression(exercise, session, final, defaultBandColours).blocked).toEqual([]);
+    session.sets[0].actual.weightKg = 40;
+    expect(reviewExerciseProgression(exercise, session, final, defaultBandColours).blocked).toEqual(['Weight']);
+    exercise.sets.forEach((set) => { set.target.weightKg = 70; });
+    expect(reviewExerciseProgression(exercise, session, final, defaultBandColours))
+      .toEqual({ accepted: { reps: 4, weightKg: 65 }, blocked: [] });
   });
 
-  it('does not stage weighted progression when reps were reached below the target load', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const weighted = { ...session.sets[0], actual: { weightKg: 40, reps: 5 } };
-
-    expect(stageSetProgression(weighted, { weightKg: 62.5 }).proposedNextTarget).toBeUndefined();
+  it('adds the ranks of combined bands using the current Settings order', () => {
+    const { template, session } = completedFixture();
+    const exercise = template.days[0].exercises[4];
+    session.sets.find((set) => set.exerciseId === exercise.id)!.actual.reps = 9;
+    const final = stageSetProgression(session.sets.at(-1)!, { bandColourIds: ['band_yellow', 'band_green'] }, bandIds);
+    expect(reviewExerciseProgression(exercise, session, final, defaultBandColours).blocked).toEqual(['Bands']);
+    const redLast = defaultBandColours.filter((band) => band.id !== 'band_red').concat(defaultBandColours[1]);
+    expect(reviewExerciseProgression(exercise, session, final, redLast))
+      .toEqual({ accepted: { bandColourIds: ['band_yellow', 'band_green'] }, blocked: [] });
   });
 
-  it('updates the planned band after a band rep target is met', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const bandSet = session.sets.find((set) => set.mode === 'band_reps')!;
-    const updatedTemplate = applySetProgression(template, session, { ...bandSet, actual: { ...bandSet.actual, reps: 10 } }, { bandColourIds: ['band_blue'] });
-
-    expect(updatedTemplate.days[0].exercises[4].sets[0].target.bandColourIds).toEqual(['band_blue']);
-  });
-
-  it('rejects invalid or unknown planned targets', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const weighted = session.sets[0];
+  it('validates staged values including bounded interval work time', () => {
+    const { session } = completedFixture();
     const band = session.sets.find((set) => set.mode === 'band_reps')!;
-
-    expect(() => applySetProgression(template, session, weighted, { weightKg: Number.NaN })).toThrow('Next weight');
-    expect(() => applySetProgression(template, session, band, { bandColourIds: ['missing'] }, ['band_red'])).toThrow(
-      'not available',
-    );
+    const interval = { ...band, mode: 'interval' as const };
+    expect(() => stageSetProgression(session.sets[0], { weightKg: Number.NaN }, bandIds)).toThrow('Next weight');
+    expect(() => stageSetProgression(band, { bandColourIds: ['missing'] }, bandIds)).toThrow('not available');
+    expect(() => stageSetProgression(interval, { seconds: 0 }, bandIds)).toThrow('Next work time');
+    expect(stageSetProgression(interval, { seconds: 90 }, bandIds).proposedNextTarget).toEqual({ seconds: 90 });
   });
 
-  it('stages, clears, and transactionally applies next-time targets', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const performed = { ...session.sets[0], actual: { ...session.sets[0].actual, reps: 7 } };
-    const staged = stageSetProgression(performed, { weightKg: 62.5, reps: 6 });
-    const completedAt = '2026-05-12T11:00:00.000Z';
-    const completedSession = {
-      ...session,
-      completedAt,
-      sets: session.sets.map((set) =>
-        set.id === staged.id ? { ...staged, completedAt } : { ...set, completedAt },
-      ),
-    };
-
-    expect(staged.proposedNextTarget).toEqual({ weightKg: 62.5, reps: 6 });
-    expect(stageSetProgression(staged, { weightKg: 60, reps: 5 }).proposedNextTarget).toBeUndefined();
-    expect(applySessionProgressions(template, { ...completedSession, completedAt: undefined })).toBe(template);
-
-    const updated = applySessionProgressions(template, completedSession);
-    expect(updated.days[0].exercises[0].sets[0].target).toMatchObject({ weightKg: 62.5, reps: 6 });
-  });
-
-  it('supports staging timed targets for the completion summary', () => {
-    const template = createDefaultTemplate();
-    const session = createSessionFromDay(template.days[0]);
-    const timed = session.sets.find((set) => set.mode === 'timed_hold')!;
-
-    expect(stageSetProgression(timed, { seconds: 60 }).proposedNextTarget).toEqual({ seconds: 60 });
-  });
-
-  it('changes or clears Other targets while ignoring fields replaced during an active workout', () => {
+  it('handles numeric Other increases, clears and changed definitions independently', () => {
     const template = createDefaultTemplate();
     const exercise = template.days[0].exercises[0];
     exercise.mode = 'other';
     exercise.modifiers = [{ id: 'grip', label: 'Grip', type: 'text' }, { id: 'balance', label: 'Balance', type: 'number' }];
-    exercise.sets = [{ ...exercise.sets[0], target: { modifiers: { grip: 'Wide', balance: 0 } } }];
-    const session = createSessionFromDay(template.days[0]);
-    const set = session.sets[0];
-    expect(set.actual).toEqual({});
-    const staged = stageSetProgression(set, { modifiers: { grip: null, balance: -1.5 } });
-    const applied = applySetProgression(template, session, staged, staged.proposedNextTarget);
-    expect(applied.days[0].exercises[0].sets[0].target.modifiers).toEqual({ balance: -1.5 });
+    exercise.sets.forEach((set) => { set.target = { modifiers: { grip: 'Wide', balance: 0 } }; });
+    const { session } = completedFixture(template);
+    session.sets[2] = stageSetProgression(session.sets[2], { modifiers: { grip: null, balance: 1.5 } }, bandIds);
+    expect(reviewExerciseProgression(exercise, session, session.sets[2], defaultBandColours))
+      .toEqual({ accepted: { modifiers: { grip: null } }, blocked: ['Balance'] });
+    const applied = applySessionProgressions(template, session, defaultBandColours);
+    expect(applied.days[0].exercises[0].sets.map((set) => set.target.modifiers)).toEqual(Array(3).fill({ balance: 0 }));
     exercise.modifiers = [{ id: 'new-grip', label: 'Grip', type: 'text' }, { id: 'balance', label: 'Balance', type: 'text' }];
-    exercise.sets[0].target = { modifiers: { 'new-grip': 'Neutral', balance: 'Steady' } };
-    const afterReplacement = applySetProgression(template, session, staged, staged.proposedNextTarget);
-    expect(afterReplacement.days[0].exercises[0].sets[0].target.modifiers).toEqual({ 'new-grip': 'Neutral', balance: 'Steady' });
+    exercise.sets.forEach((set) => { set.target = { modifiers: { 'new-grip': 'Neutral', balance: 'Steady' } }; });
+    expect(applySessionProgressions(template, session, defaultBandColours)).toBe(template);
   });
 });

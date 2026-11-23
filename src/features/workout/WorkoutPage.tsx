@@ -1,21 +1,23 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Check, Clock3, Pause, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
-import { weekdayName } from '../../domain/calendar';
+import { sessionWorkoutDate, weekdayName } from '../../domain/calendar';
 import { advanceInterval, pauseInterval, resumeInterval, skipIntervalRest, startInterval, type IntervalUpdate } from '../../domain/interval';
 import { formatDuration } from '../../domain/rest';
 import { completeSessionIfDone, completeSet, createActiveRest, createSessionFromDay, logRestEvent, uncompleteSet, updateExerciseNotes } from '../../domain/session';
-import type { ActiveRest, ActiveWorkout, BandColour, Modifier, SessionSet, SetValues, WorkoutSession } from '../../domain/types';
+import type { ActiveRest, ActiveWorkout, AppData, BandColour, Modifier, SessionSet, SetValues, TemplateDay, WorkoutSession } from '../../domain/types';
 import { changeModifierValue, modifierValue } from '../../domain/modifiers';
 import { formatTargetRange, getRecordedRangeMax } from '../../domain/targetRange';
 import { validateSetValues } from '../../domain/validation';
-import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, stageSetProgression, type PlannedSetProgression } from '../../domain/workoutFlow';
+import { applySessionProgressions, formatSetTarget, getCurrentSessionSet, getFinalExerciseSets, reviewExerciseProgression, stageSetProgression, type PlannedSetProgression } from '../../domain/workoutFlow';
+import { findPreviousSet } from '../../domain/previousSet';
 import { playIntervalBell, playIntervalFinishAlarm, playRestAlarm, primeAlarmAudio, primeIntervalAudio } from '../../lib/alarm';
 import { formatBandNames, formatSetActual } from '../../lib/workoutFormatting';
 import { useTracker } from '../../app/TrackerContext';
 import { ValidatedInput } from '../../components/ValidatedInput';
 import { ExerciseNotes } from '../../components/ExerciseNotes';
 import { ModifierInput } from '../../components/ModifierInput';
+import { WorkTimeInput } from '../../components/WorkTimeInput';
 import { IntervalTimer } from './IntervalTimer';
 
 export function WorkoutPage() {
@@ -29,6 +31,14 @@ export function WorkoutPage() {
   const selectedSet = session?.sets.find((set) => set.id === activeWorkout?.selectedSetId && !set.completedAt);
   const currentSet = selectedSet ?? (session ? getCurrentSessionSet(session) : undefined);
   const completedCount = session?.sets.filter((set) => set.completedAt).length ?? 0;
+  const finalSets = session && getFinalExerciseSets(session);
+  const planDay = data.template.days.find((day) => day.id === session?.templateDayId);
+  const plannedExercise = planDay?.exercises.find((exercise) => exercise.id === currentSet?.exerciseId);
+  const currentPlanTarget = plannedExercise?.mode === currentSet?.mode ? plannedExercise?.sets[0]?.target : undefined;
+  const referenceSet = interval ? (interval.phase === 'work' ? intervalSet : undefined) : currentSet;
+  const previousSet = session && referenceSet && findPreviousSet(data.sessions, session, referenceSet);
+  const previous = session && referenceSet && previousSet && <PreviousResult set={previousSet} bandColours={data.bandColours}
+    modifiers={session.snapshot.exercises[referenceSet.exerciseIndex]?.modifiers} />;
 
   useScreenWakeLock(Boolean(session && !session.completedAt));
 
@@ -53,68 +63,32 @@ export function WorkoutPage() {
   function updateActual(setId: string, actual: SetValues) {
     saveData((current) => {
       const workout = current.activeWorkout;
-      if (!workout) return current;
-      return {
-        ...current,
-        activeWorkout: {
-          ...workout,
-          session: {
-            ...workout.session,
-            sets: workout.session.sets.map((set) => {
-              if (set.id !== setId) return set;
-              const nextSet = { ...set, actual };
-              try {
-                return stageSetProgression(nextSet, set.proposedNextTarget, current.bandColours.map((band) => band.id),
-                  getRecordedRangeMax(workout.session, set));
-              } catch {
-                return { ...nextSet, proposedNextTarget: undefined };
-              }
-            }),
-          },
-        },
-      };
+      if (!workout || workout.session.id !== session?.id) return current;
+      return updateWorkoutSet(current, workout, setId, (set) => ({ ...set, actual }));
     });
   }
 
-  function updateProgression(setId: string, progression?: PlannedSetProgression) {
-    const set = session?.sets.find((item) => item.id === setId);
-    if (!session || !set) return;
-    let stagedSet: SessionSet;
+  function updateProgression(set: SessionSet, progression?: PlannedSetProgression) {
+    if (finalSets?.get(set.exerciseId)?.id !== set.id) return;
     try {
-      stagedSet = stageSetProgression(set, progression, data.bandColours.map((band) => band.id),
-        getRecordedRangeMax(session, set));
+      const staged = stageSetProgression(set, progression, data.bandColours.map((band) => band.id));
+      saveData((current) => {
+        const workout = current.activeWorkout;
+        if (!workout || workout.session.id !== session?.id) return current;
+        return updateWorkoutSet(current, workout, set.id, (live) => ({ ...live, proposedNextTarget: staged.proposedNextTarget }));
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'That next-time target is not valid.');
-      return;
     }
-
-    saveData((current) => {
-      if (!current.activeWorkout) return current;
-      return {
-        ...current,
-        activeWorkout: {
-          ...current.activeWorkout,
-          session: {
-            ...current.activeWorkout.session,
-            sets: current.activeWorkout.session.sets.map((item) => (item.id === setId ? stagedSet : item)),
-          },
-        },
-      };
-    });
   }
 
   function completeWorkoutSet(set: SessionSet) {
-    const invalid = document.querySelector<HTMLInputElement>('.focused-workout-screen input[aria-invalid="true"]');
-    if (invalid) {
-      const panel = invalid.closest('details');
-      if (panel) panel.open = true;
-      invalid.reportValidity();
-      return;
-    }
+    if (reportInvalidWorkoutInput()) return;
     if (!data.settings.hideRestTimes) primeAlarmAudio();
     const errors = validateSetValues(set.mode, set.actual);
     if (errors.length) {
-      window.alert(errors.join('\n'));
+      window.alert(set.mode === 'band_reps' && !set.actual.bandColourIds?.length
+        ? 'Choose a band colour in Plan and restart the workout to use it.' : errors.join('\n'));
       return;
     }
 
@@ -214,17 +188,19 @@ export function WorkoutPage() {
     if (!confirmed) return;
     const latestDay = data.template.days.find((item) => item.id === session.templateDayId) ?? session.snapshot;
     if (!latestDay.exercises.length || !latestDay.exercises.some((exercise) => exercise.sets.length)) return;
-    saveData((current) => ({ ...current, activeWorkout: { session: createSessionFromDay({ ...latestDay, label: weekdayName(latestDay.weekday) }) } }));
+    saveData((current) => ({ ...current, activeWorkout: {
+      session: createSessionFromDay({ ...latestDay, label: weekdayName(latestDay.weekday) }, new Date(), sessionWorkoutDate(session)),
+    } }));
     primeAlarmAudio();
   }
 
   async function saveCompletedWorkout() {
-    if (!session?.completedAt || !session.sets.length) return;
+    if (!session?.completedAt || !session.sets.length || reportInvalidWorkoutInput()) return;
     setFinishingSessionId(session.id);
     await saveData((current) => {
       if (!current.activeWorkout?.session.completedAt || current.activeWorkout.session.id !== session.id) return current;
       const completedSession = current.activeWorkout.session;
-      const template = applySessionProgressions(current.template, completedSession, current.bandColours.map((band) => band.id));
+      const template = applySessionProgressions(current.template, completedSession, current.bandColours);
       return {
         ...current,
         template,
@@ -264,6 +240,7 @@ export function WorkoutPage() {
           interval={interval}
           set={intervalSet}
           setCount={session.snapshot.exercises[intervalSet.exerciseIndex].sets.length}
+          previous={previous}
           ready={status === 'saved'}
           onDue={(live) => void updateInterval((workout) => advanceInterval(workout, Date.now(), live))}
           onPause={() => void updateInterval((workout) => ({ workout: pauseInterval(workout, Date.now()) }))}
@@ -293,6 +270,8 @@ export function WorkoutPage() {
       <WorkoutSummary
         session={session}
         bandColours={data.bandColours}
+        planDay={planDay}
+        onProgressionChange={updateProgression}
         onSave={saveCompletedWorkout}
         saving={status === 'saving'}
         onUndo={(setId) => undoCompletedSet(setId)}
@@ -309,8 +288,12 @@ export function WorkoutPage() {
       session={session}
       completedCount={completedCount}
       bandColours={data.bandColours}
+      previous={previous}
+      finalSet={finalSets?.get(currentSet.exerciseId)?.id === currentSet.id}
+      planTarget={currentPlanTarget}
+      blockedIncreases={reviewExerciseProgression(plannedExercise, session, currentSet, data.bandColours).blocked}
       onActualChange={(actual) => updateActual(currentSet.id, actual)}
-      onProgressionChange={(progression) => updateProgression(currentSet.id, progression)}
+      onProgressionChange={(progression) => updateProgression(currentSet, progression)}
       onSaveNotes={(notes) => saveData((current) => updateExerciseNotes(current, session.templateDayId, currentSet.exerciseId, notes))}
       onComplete={() => currentSet.mode === 'interval' ? beginInterval(currentSet) : completeWorkoutSet(currentSet)}
       startingBlocked={currentSet.mode === 'interval' && status !== 'saved'}
@@ -321,6 +304,26 @@ export function WorkoutPage() {
       onUndoLast={completedCount ? () => undoCompletedSet() : undefined}
     />
   );
+}
+
+function updateWorkoutSet(data: AppData, workout: ActiveWorkout, setId: string,
+  update: (set: SessionSet) => SessionSet) {
+  return {
+    ...data,
+    activeWorkout: { ...workout, session: {
+      ...workout.session,
+      sets: workout.session.sets.map((set) => set.id === setId ? update(set) : set),
+    } },
+  };
+}
+
+function reportInvalidWorkoutInput(): boolean {
+  const invalid = document.querySelector<HTMLInputElement>('.focused-workout-screen input[aria-invalid="true"]');
+  if (!invalid) return false;
+  const panel = invalid.closest('details');
+  if (panel) panel.open = true;
+  invalid.reportValidity();
+  return true;
 }
 
 interface WakeLockSentinelLike {
@@ -399,6 +402,8 @@ function EmptyActiveWorkout({
 function WorkoutSummary({
   session,
   bandColours,
+  planDay,
+  onProgressionChange,
   onSave,
   saving,
   onUndo,
@@ -407,13 +412,21 @@ function WorkoutSummary({
 }: {
   session: WorkoutSession;
   bandColours: BandColour[];
+  planDay?: TemplateDay;
+  onProgressionChange: (set: SessionSet, progression?: PlannedSetProgression) => void;
   onSave: () => void;
   saving: boolean;
   onUndo: (setId: string) => void;
   onRestart: () => void;
   onDiscard: () => void;
 }) {
-  const proposedCount = session.sets.filter((set) => set.proposedNextTarget && Object.values(set.proposedNextTarget).some((value) => value !== undefined)).length;
+  const finalSets = getFinalExerciseSets(session);
+  const plannedExercises = new Map(planDay?.exercises.map((exercise) => [exercise.id, exercise]));
+  const reviews = new Map([...finalSets.values()].map((set) => [set.id, reviewExerciseProgression(
+    plannedExercises.get(set.exerciseId), session, set, bandColours,
+  )]));
+  const proposedCount = [...reviews.values()].filter(({ accepted }) => Object.keys(accepted).length).length;
+  const olderProposals = session.sets.some((set) => set.proposedNextTarget && finalSets.get(set.exerciseId)?.id !== set.id);
   const elapsedSeconds = Math.max(0, Math.round(((session.completedAt ? new Date(session.completedAt) : new Date()).getTime() - new Date(session.startedAt).getTime()) / 1000));
 
   return (
@@ -438,10 +451,17 @@ function WorkoutSummary({
             {proposedCount} next-time {proposedCount === 1 ? 'target is' : 'targets are'} staged. They will update the plan only when you save.
           </p>
         )}
+        {olderProposals && <p className="progression-notice" role="status">
+          To use a Next time target from an earlier set, undo that exercise’s final set and enter the target there.
+        </p>}
 
         <div className="summary-set-list" aria-label="Completed sets">
           {session.sets.map((set) => {
             const exercise = session.snapshot.exercises[set.exerciseIndex];
+            const review = reviews.get(set.id);
+            const proposal = review?.accepted ?? set.proposedNextTarget;
+            const proposedLabel = proposal && formatProposedTarget(proposal, bandColours, exercise?.modifiers);
+            const planned = plannedExercises.get(set.exerciseId);
             return (
               <div className="summary-set-row" key={set.id}>
                 <div>
@@ -449,11 +469,20 @@ function WorkoutSummary({
                     {set.exerciseName} · Set {set.setNumber}
                   </strong>
                   <span>{formatSetActual(set, bandColours, exercise?.modifiers)}</span>
-                  {set.proposedNextTarget && <small>{formatProposedTarget(set, bandColours, exercise?.modifiers)}</small>}
+                  {proposedLabel && <small>{review ? 'Next time' : 'Earlier proposal'}: {proposedLabel}</small>}
+                  {set.mode !== 'interval' && review && <BlockedIncreases fields={review.blocked} />}
                 </div>
                 <button className="ghost-button" type="button" onClick={() => onUndo(set.id)} aria-label={`Undo ${set.exerciseName} set ${set.setNumber}`}>
                   Undo
                 </button>
+                {set.mode === 'interval' && review && (
+                  <NextTargetPanel progression={set.proposedNextTarget ?? {}} blockedIncreases={review.blocked}
+                    onClear={() => onProgressionChange(set)}>
+                    <WorkTimeInput label="Next time Work Time (minutes)" seconds={set.proposedNextTarget?.seconds}
+                        placeholderSeconds={planned?.mode === 'interval' ? planned.sets[0].target.seconds : set.target.seconds}
+                      onValue={(seconds) => onProgressionChange(set, { seconds })} />
+                  </NextTargetPanel>
+                )}
               </div>
             );
           })}
@@ -471,9 +500,7 @@ function WorkoutSummary({
   );
 }
 
-function formatProposedTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[]): string | undefined {
-  const proposal = set.proposedNextTarget;
-  if (!proposal) return undefined;
+function formatProposedTarget(proposal: PlannedSetProgression, bandColours: BandColour[], modifiers?: Modifier[]): string | undefined {
   const parts: string[] = [];
   if (proposal.weightKg !== undefined) parts.push(`${proposal.weightKg} kg`);
   if (proposal.seconds !== undefined) parts.push(`${proposal.seconds}s`);
@@ -483,7 +510,7 @@ function formatProposedTarget(set: SessionSet, bandColours: BandColour[], modifi
     const value = modifierValue(proposal.modifiers, field.id);
     if (value !== undefined) parts.push(`${field.label}: ${value ?? 'Clear target'}`);
   }
-  return parts.length ? `Next time: ${parts.join(' × ')}` : undefined;
+  return parts.length ? parts.join(' × ') : undefined;
 }
 
 function RestScreen({
@@ -563,6 +590,10 @@ function ActiveSetScreen({
   session,
   completedCount,
   bandColours,
+  previous,
+  finalSet,
+  planTarget,
+  blockedIncreases,
   onActualChange,
   onProgressionChange,
   onSaveNotes,
@@ -578,6 +609,10 @@ function ActiveSetScreen({
   session: WorkoutSession;
   completedCount: number;
   bandColours: BandColour[];
+  previous?: ReactNode;
+  finalSet: boolean;
+  planTarget?: SetValues;
+  blockedIncreases: string[];
   onActualChange: (values: SetValues) => void;
   onProgressionChange: (progression?: PlannedSetProgression) => void;
   onSaveNotes: (notes?: string) => Promise<boolean>;
@@ -612,14 +647,10 @@ function ActiveSetScreen({
         <progress className="workout-progress" aria-label="Workout progress" value={completedCount} max={session.sets.length} />
 
         <TargetSummary set={set} bandColours={bandColours} modifiers={exercise?.modifiers} rangeMax={getRecordedRangeMax(session, set)} />
-        {set.mode !== 'interval' && <ActualSetEditor
-          set={set}
-          bandColours={bandColours}
-          modifiers={exercise?.modifiers}
-          progression={set.proposedNextTarget ?? {}}
-          onChange={onActualChange}
-          onProgressionChange={onProgressionChange}
-        />}
+        {previous}
+        <ActualSetEditor set={set} modifiers={exercise?.modifiers} onChange={onActualChange} />
+        {finalSet && <NextTargetEditor set={set} planTarget={planTarget ?? set.target} bandColours={bandColours} modifiers={exercise?.modifiers}
+          blockedIncreases={blockedIncreases} onChange={onProgressionChange} />}
         <ExerciseNotes notes={exercise?.notes} onSave={onSaveNotes} />
 
         <div className="active-set-actions">
@@ -746,7 +777,7 @@ function TargetSummary({ set, bandColours, modifiers, rangeMax }: {
   if (set.mode === 'band_reps') {
     return (
       <section className="target-summary two" aria-label="Target">
-        <ValueTile label="Target band" value={formatBandNames(set.target.bandColourIds ?? [], bandColours)} />
+        <ValueTile label="Bands" value={formatBandNames(set.actual.bandColourIds ?? [], bandColours)} />
         <ValueTile label="Target reps" value={formatTargetRange(set.target.reps ?? 0, rangeMax)} />
       </section>
     );
@@ -754,7 +785,7 @@ function TargetSummary({ set, bandColours, modifiers, rangeMax }: {
 
   return (
     <section className="target-summary two" aria-label="Target">
-      <ValueTile label="Target weight" value={`${set.target.weightKg ?? 0} kg`} />
+      <ValueTile label="Weight" value={`${set.actual.weightKg ?? 0} kg`} />
       <ValueTile label="Target reps" value={formatTargetRange(set.target.reps ?? 0, rangeMax)} />
     </section>
   );
@@ -769,156 +800,125 @@ function ValueTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ActualSetEditor({
-  set,
-  bandColours,
-  modifiers,
-  progression,
-  onChange,
-  onProgressionChange,
-}: {
+function PreviousResult({ set, bandColours, modifiers }: { set: SessionSet; bandColours: BandColour[]; modifiers?: Modifier[] }) {
+  const value = set.mode === 'weighted_reps' || set.mode === 'band_reps'
+    ? `${set.actual.reps} reps` : formatSetActual(set, bandColours, modifiers);
+  return <section className="previous-result" aria-label="Previous"><ValueTile label="Previous" value={value} /></section>;
+}
+
+function ActualSetEditor({ set, modifiers, onChange }: {
   set: SessionSet;
-  bandColours: BandColour[];
   modifiers?: Modifier[];
-  progression: PlannedSetProgression;
   onChange: (values: SetValues) => void;
-  onProgressionChange: (values?: PlannedSetProgression) => void;
 }) {
+  const fields = modifiers ?? [];
+  if (set.mode === 'interval' || (set.mode === 'other' && !fields.length)) return null;
+
   function patch(next: Partial<SetValues>) {
     onChange({ ...set.actual, ...next });
   }
 
-  function patchProgression(next: Partial<PlannedSetProgression>) {
-    onProgressionChange({ ...progression, ...next });
-  }
-
-  if (set.mode === 'other') {
-    const fields = modifiers ?? [];
-    return (
-      <section className="actual-editor">
-        {fields.length > 0 && <div className="modifier-values">
-          {fields.map((field) => (
-            <ModifierInput key={field.id} field={field} label={`Performed ${field.label}`} value={modifierValue(set.actual.modifiers, field.id)}
-              onChange={(value) => patch({ modifiers: changeModifierValue(set.actual.modifiers, field.id, value) })} />
-          ))}
-        </div>}
-        <NextTargetPanel progression={progression} onClear={() => onProgressionChange(undefined)}>
-          {fields.map((field) => {
-            const target = modifierValue(set.target.modifiers, field.id);
-            const proposed = modifierValue(progression.modifiers, field.id);
-            return <div className="modifier-next-target" key={field.id}>
-              <ModifierInput field={field} label={`Next target ${field.label}`} value={proposed ?? undefined}
-                placeholder={proposed === null ? 'Target will be cleared' : target === undefined ? undefined : String(target)}
-                onChange={(value) => patchProgression({ modifiers: changeModifierValue(progression.modifiers, field.id, value) })} />
-              {target !== undefined && proposed !== null && <button className="small-button" type="button"
-                onClick={() => patchProgression({ modifiers: changeModifierValue(progression.modifiers, field.id, null) })}>
-                Clear {field.label} target
-              </button>}
-            </div>;
-          })}
-          {!fields.length && <p className="muted-text">Add modifiers in Plan to set a target.</p>}
-        </NextTargetPanel>
-      </section>
-    );
-  }
-
-  const repControls = <NumberStepper label="Performed reps" value={set.actual.reps} onChange={(reps) => patch({ reps })} />;
-
-  if (set.mode === 'timed_hold') {
-    return (
-      <section className="actual-editor">
-        <div>
-          <p className="eyebrow">Performed</p>
-          <NumberStepper label="Performed seconds" value={set.actual.seconds} step={5} onChange={(seconds) => patch({ seconds })} />
-        </div>
-        <NextTargetPanel progression={progression} onClear={() => onProgressionChange(undefined)}>
-          <NumberStepper
-            label="Next target seconds"
-            value={progression.seconds}
-            step={5}
-            placeholder={set.target.seconds}
-            onChange={(seconds) => patchProgression({ seconds })}
-          />
-        </NextTargetPanel>
-      </section>
-    );
-  }
-
-  if (set.mode === 'band_reps') {
-    const performedBands = set.actual.bandColourIds ?? [];
-    const nextBands = progression.bandColourIds ?? set.target.bandColourIds ?? [];
-    return (
-      <section className="actual-editor">
-        <div className="performed-fields">
-          <p className="eyebrow">Performed</p>
-          <BandPicker
-            label="Performed bands"
-            bandColours={bandColours}
-            selectedIds={performedBands}
-            onChange={(bandColourIds) => patch({ bandColourIds })}
-          />
-          {repControls}
-        </div>
-        <NextTargetPanel progression={progression} onClear={() => onProgressionChange(undefined)}>
-          <BandPicker
-            label="Next target bands"
-            bandColours={bandColours}
-            selectedIds={nextBands}
-            onChange={(bandColourIds) => patchProgression({ bandColourIds })}
-          />
-          <NumberStepper
-            label="Next target reps"
-            value={progression.reps}
-            placeholder={set.target.reps}
-            onChange={(reps) => patchProgression({ reps })}
-          />
-        </NextTargetPanel>
-      </section>
-    );
-  }
-
   return (
     <section className="actual-editor">
-      <div className="performed-fields weighted-actual-editor">
-        <p className="eyebrow">Performed</p>
-        <NumberStepper label="Performed weight" value={set.actual.weightKg} step={0.5} suffix="kg" onChange={(weightKg) => patch({ weightKg })} />
-        {repControls}
-      </div>
-      <NextTargetPanel progression={progression} onClear={() => onProgressionChange(undefined)}>
-        <NumberStepper
-          label="Next target weight"
-          value={progression.weightKg}
-          step={0.5}
-          suffix="kg"
-          placeholder={set.target.weightKg}
-          onChange={(weightKg) => patchProgression({ weightKg })}
-        />
-        <NumberStepper
-          label="Next target reps"
-          value={progression.reps}
-          placeholder={set.target.reps}
-          onChange={(reps) => patchProgression({ reps })}
-        />
-      </NextTargetPanel>
+      {set.mode === 'other' ? (
+        <div className="modifier-values">
+          {fields.map((field) => (
+            <ModifierInput key={field.id} field={field} label={'Performed ' + field.label} value={modifierValue(set.actual.modifiers, field.id)}
+              onChange={(value) => patch({ modifiers: changeModifierValue(set.actual.modifiers, field.id, value) })} />
+          ))}
+        </div>
+      ) : set.mode === 'timed_hold' ? (
+        <NumberStepper label="Performed seconds" value={set.actual.seconds} step={5} onChange={(seconds) => patch({ seconds })} />
+      ) : (
+        <NumberStepper label="Performed reps" value={set.actual.reps} onChange={(reps) => patch({ reps })} />
+      )}
     </section>
   );
 }
 
+function NextTargetEditor({ set, planTarget, bandColours, modifiers, blockedIncreases, onChange }: {
+  set: SessionSet;
+  planTarget: SetValues;
+  bandColours: BandColour[];
+  modifiers?: Modifier[];
+  blockedIncreases: string[];
+  onChange: (values?: PlannedSetProgression) => void;
+}) {
+  const progression = set.proposedNextTarget ?? {};
+  function patch(next: Partial<PlannedSetProgression>) {
+    onChange({ ...progression, ...next });
+  }
+
+  let fields: ReactNode;
+  switch (set.mode) {
+    case 'interval':
+      return null;
+    case 'other':
+      if (!modifiers?.length) return null;
+      fields = modifiers.map((field) => {
+        const target = modifierValue(planTarget.modifiers, field.id);
+        const proposed = modifierValue(progression.modifiers, field.id);
+        return (
+          <div className="modifier-next-target" key={field.id}>
+            <ModifierInput field={field} label={'Next target ' + field.label} value={proposed ?? undefined}
+              placeholder={proposed === null ? 'Target will be cleared' : target === undefined ? undefined : String(target)}
+              onChange={(value) => patch({ modifiers: changeModifierValue(progression.modifiers, field.id, value) })} />
+            {target !== undefined && proposed !== null && <button className="small-button" type="button"
+              onClick={() => patch({ modifiers: changeModifierValue(progression.modifiers, field.id, null) })}>
+              Clear {field.label} target
+            </button>}
+          </div>
+        );
+      });
+      break;
+    case 'timed_hold':
+      fields = <NumberStepper label="Next target seconds" value={progression.seconds} step={5}
+        placeholder={planTarget.seconds} onChange={(seconds) => patch({ seconds })} />;
+      break;
+    case 'weighted_reps':
+    case 'band_reps':
+      fields = <>
+        {set.mode === 'band_reps' ? (
+          <BandPicker label="Next target bands" bandColours={bandColours}
+            selectedIds={progression.bandColourIds ?? planTarget.bandColourIds ?? []}
+            onChange={(bandColourIds) => patch({ bandColourIds })} />
+        ) : (
+          <NumberStepper label="Next target weight" value={progression.weightKg} step={0.5} suffix="kg"
+            placeholder={planTarget.weightKg} onChange={(weightKg) => patch({ weightKg })} />
+        )}
+        <NumberStepper label="Next target reps" value={progression.reps}
+          placeholder={planTarget.reps} onChange={(reps) => patch({ reps })} />
+      </>;
+      break;
+  }
+  return <NextTargetPanel progression={progression} blockedIncreases={blockedIncreases} onClear={() => onChange(undefined)}>
+    {fields}
+  </NextTargetPanel>;
+}
+
+function BlockedIncreases({ fields }: { fields: string[] }) {
+  if (!fields.length) return null;
+  return <p className="form-message" role="status">{fields.join(', ')} can only increase when every set of this exercise meets its target.</p>;
+}
+
 function NextTargetPanel({
   progression,
+  blockedIncreases,
   onClear,
   children,
 }: {
   progression: PlannedSetProgression;
+  blockedIncreases: string[];
   onClear: () => void;
   children: ReactNode;
 }) {
   const hasProposal = Object.values(progression).some((value) => value !== undefined);
   return (
     <details className="next-target-panel" open={hasProposal || undefined}>
-      <summary>Next time <span>optional</span></summary>
-      <p className="muted-text">Leave blank to keep the current target. Changes are applied only when you save the workout.</p>
+      <summary>Next time</summary>
+      <p className="muted-text">Changes apply to all sets of this exercise when you save the workout.</p>
       <div className="next-target-fields">{children}</div>
+      <BlockedIncreases fields={blockedIncreases} />
       {hasProposal && (
         <button className="small-button" type="button" onClick={onClear}>
           Keep current target

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultTemplate, defaultBandColours } from './sampleData';
 import { createSessionFromDay } from './session';
+import type { WorkoutSession } from './types';
 import { getRecordedRangeMax, parseTargetRange } from './targetRange';
-import { applySetProgression, stageSetProgression } from './workoutFlow';
+import { applySessionProgressions, stageSetProgression } from './workoutFlow';
 import { formatPlannedSets } from '../lib/workoutFormatting';
 
 describe('planned target ranges', () => {
@@ -39,22 +40,22 @@ describe('planned target ranges', () => {
 
   it('prefills the minimum and treats an explicit numeric target as replacing the range', () => {
     const template = createDefaultTemplate();
-    const planned = template.days[0].exercises[0].sets[0];
-    planned.rangeMax = 8;
+    template.days[0].exercises[0].sets.forEach((set) => { set.rangeMax = 8; });
     const session = createSessionFromDay(template.days[0]);
-    const set = session.sets[0];
+    const set = session.sets[2];
     const rangeMax = getRecordedRangeMax(session, set);
 
     expect(rangeMax).toBe(8);
     expect(set.actual.reps).toBe(5);
-    const staged = stageSetProgression(set, { reps: 5 }, undefined, rangeMax);
-    expect(staged.proposedNextTarget).toEqual({ reps: 5 });
-    expect(applySetProgression(template, session, staged, staged.proposedNextTarget)
-      .days[0].exercises[0].sets[0].rangeMax).toBeUndefined();
-    expect(applySetProgression(template, session, set, { weightKg: 70 })
-      .days[0].exercises[0].sets[0]).toMatchObject({ rangeMax: 8, target: { weightKg: 70, reps: 5 } });
-    expect(stageSetProgression({ ...set, actual: { ...set.actual, reps: 4 } }, { reps: 5 }, undefined, rangeMax)
-      .proposedNextTarget).toBeUndefined();
+    const completedAt = new Date().toISOString();
+    const completed: WorkoutSession = { ...session, completedAt, sets: session.sets.map((item) => ({ ...item, completedAt })) };
+    const bandIds = defaultBandColours.map((band) => band.id);
+    completed.sets[2] = stageSetProgression(completed.sets[2], { reps: 5 }, bandIds);
+    expect(applySessionProgressions(template, completed, defaultBandColours).days[0].exercises[0].sets.map((item) => item.rangeMax))
+      .toEqual([undefined, undefined, undefined]);
+    completed.sets[2] = stageSetProgression(completed.sets[2], { weightKg: 70 }, bandIds);
+    expect(applySessionProgressions(template, completed, defaultBandColours).days[0].exercises[0].sets[0])
+      .toMatchObject({ rangeMax: 8, target: { weightKg: 70, reps: 5 } });
     expect(getRecordedRangeMax(session, set)).toBe(8);
   });
 });

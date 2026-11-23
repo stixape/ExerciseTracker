@@ -3,10 +3,11 @@ import Dexie from 'dexie';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultAppData } from '../domain/sampleData';
 import { createSessionFromDay } from '../domain/session';
+import { startInterval } from '../domain/interval';
 import { createJsonExport } from '../domain/export';
 import { parseJsonImport } from './localData';
 import { checksum } from './backupFormat';
-import { commitAppData, createRawRecoveryExport, ExerciseTrackerDb, listCheckpoints, readCheckpoint, loadAppData, offlineDb, retainedCheckpointIds, StorageConflictError } from './offlineDb';
+import { commitAppData, createRawRecoveryExport, ExerciseTrackerDb, listCheckpoints, readCheckpoint, readWorkoutBackup, loadAppData, offlineDb, retainedCheckpointIds, StorageConflictError } from './offlineDb';
 
 const userId = 'local-user';
 const key = 'exercise-tracker:data:' + userId;
@@ -160,6 +161,37 @@ describe('revisioned canonical storage and recovery', () => {
 describe('historical migrations retain sources', () => {
   beforeEach(async () => { localStorage.clear(); offlineDb.close(); await Dexie.delete('ExerciseTracker'); });
   afterEach(() => offlineDb.close());
+  it('upgrades a mixed v8 plan while preserving active interval state, history and the queued revision', async () => {
+    const data = fixture();
+    const day = data.template.days[1];
+    const exercise = day.exercises[0];
+    exercise.mode = 'interval';
+    exercise.sets = exercise.sets.map((set, index) => ({ ...set, target: { seconds: 30 + index } }));
+    const session = createSessionFromDay(day);
+    delete session.workoutDate;
+    delete data.sessions[0].workoutDate;
+    data.activeWorkout = startInterval({ session }, exercise.id, Date.parse(session.startedAt));
+    const original = { userId, data, snapshotId: 'original-v8', revision: 4, updatedAt: session.startedAt, checksum: checksum(data) };
+    const oldDb = new Dexie('ExerciseTracker');
+    oldDb.version(8).stores({
+      appData: '&userId, updatedAt', recoverySources: 'id, userId, createdAt', checkpoints: 'id, userId, createdAt',
+      checkpointIndex: 'id, userId, createdAt', preferences: '&key', workoutBackupJobs: '&snapshotId, [userId+revision]',
+    });
+    await oldDb.table('appData').put(original);
+    await oldDb.table('workoutBackupJobs').put({ userId, snapshotId: original.snapshotId, revision: original.revision });
+    oldDb.close();
+
+    const migrated = await ready();
+    expect(migrated.revision).toBe(5);
+    expect(migrated.data.template.days[1].exercises[0].sets.map((set) => set.target.seconds)).toEqual([30, 30, 30]);
+    expect(migrated.data.activeWorkout).toEqual(original.data.activeWorkout);
+    expect(migrated.data.sessions).toEqual(original.data.sessions);
+    expect(await readWorkoutBackup(userId, original.snapshotId)).toEqual(original);
+    const archives = await offlineDb.recoverySources.where('userId').equals(userId).toArray();
+    expect(archives).toContainEqual(expect.objectContaining({ source: 'before-uniform-plan', raw: original }));
+    offlineDb.close();
+    expect((await ready()).snapshotId).toBe(migrated.snapshotId);
+  });
   it('does not manufacture a starter plan when only a legacy active workout survives', async () => {
     const data = fixture();
     const db = new Dexie('ExerciseTracker');

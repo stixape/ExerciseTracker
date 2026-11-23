@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { formatDuration } from '../../domain/rest';
 import type { ActiveInterval, SessionSet } from '../../domain/types';
 
-export function IntervalTimer({ interval, set, setCount, ready, onDue, onPause, onResume, onSkip }: {
+export function IntervalTimer({ interval, set, setCount, previous, ready, onDue, onPause, onResume, onSkip }: {
   interval: ActiveInterval;
   set: SessionSet;
   setCount: number;
+  previous?: ReactNode;
   ready: boolean;
   onDue: (live: boolean) => void;
   onPause: () => void;
@@ -62,6 +63,7 @@ export function IntervalTimer({ interval, set, setCount, ready, onDue, onPause, 
       <strong className="interval-countdown" role="timer" aria-label={remaining + ' seconds remaining'}>
         {formatDuration(remaining)}
       </strong>
+      {previous}
       <div className="interval-actions">
         <button className="primary-button" type="button" disabled={!ready} onClick={paused ? () => {
           setClock(Date.now());

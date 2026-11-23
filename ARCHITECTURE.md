@@ -1,6 +1,6 @@
 # ExerciseTracker architecture
 
-Updated 2026-11-22 for the Interval timer. Original onboarding observed base c58a8ab on 2026-10-25.
+Updated 2026-11-23 for shared exercise targets and the daily workout lock. Original onboarding observed base c58a8ab on 2026-10-25.
 
 ## Purpose and flow
 
@@ -10,15 +10,17 @@ A mobile-first, local-first workout PWA. Users edit weekly plans, log weighted, 
 - src/App.tsx contains the main shell and the Workout, Plan, Progress and Settings routes. The Workout landing page previews today's plan or offers to resume. src/features/workout/WorkoutPage.tsx owns active sets, rests and completion review.
 - src/app/TrackerContext.tsx distinguishes ready/empty/recovery startup, queues revision-checked commits, blocks edits during replacement, preserves pending changes on failure, and shows actionable save and backup alerts. Settings shows the latest verified backup. Cross-window notifications and resume checks supplement the database's transactional revision guard.
 - src/domain/ contains types, default plans, session/workout progression, rest rules, band operations, analytics, validation and export logic.
-- src/lib/offlineDb.ts uses Dexie/IndexedDB schema v8. The revision check, canonical snapshot, recovery checkpoint and completed-workout backup job commit together. A pending job reads the canonical snapshot by ID until a subsequent commit moves that payload into the job. Schema v8 accepts interval state in the existing tables and blocks writers that predate it.
-- appDataSchema.ts and localData.ts validate and restore versioned data. JSON v7 adds Interval and its active timer state. Versions 1–6 remain restorable, with SHA-256 verification for v5–v7. Incomplete field drafts stay in the editor.
+- src/lib/offlineDb.ts uses Dexie/IndexedDB schema v9. The revision check, canonical snapshot, recovery checkpoint and completed-workout backup job commit together. A pending job reads the canonical snapshot by ID until a subsequent write, including migration, moves that payload into the job. The v9 migration archives each changed head and converts only its live plan in the same transaction.
+- appDataSchema.ts and localData.ts validate versioned data. JSON v8 adds local workout dates and staged Interval work time. Versions 1–8 remain restorable, with SHA-256 verification for v5–v8. Restore converts the live plan after validation. Incomplete field drafts stay in the editor.
 - workoutBackups.ts processes completed-workout jobs under a browser-wide lock for this origin. It verifies the written file before deleting the oldest verified automatic copy. File order uses a folder sequence. Manual folder export and protected pre-replacement copies use fileBackups.ts. See [backup and recovery](docs/recovery.md).
 - remoteBackups.ts lazily loads Supabase only on a configured dedicated origin. Authentication and immutable per-account/per-device-stream snapshot uploads require explicit opt-in and stream approval. No remote record is automatically applied locally. Reset/import/restore pauses uploads and starts a new stream on approval. Backend SQL and policy tests are under supabase/.
 - src/lib/alarm.ts supports workout alarm feedback. Browser interaction/audio restrictions still apply.
 
 Data flows from UI actions through domain transformations into the shared context and validated local snapshot. JSON is the backup/restore path; CSV is an export format. The current settings include hiding rest countdowns and archiving/reordering band colours. Remote restoration is explicit; automatic cross-device merging remains absent.
 
-Each active workout snapshots the exercise rest overrides, notes and modifier definitions. Saving notes updates the matching live plan and active snapshot in one edit. Other modifier targets and results are keyed by field ID, while staged next targets apply only to the matching field and type at workout completion. Session history reads the recorded values and labels from the session snapshot.
+Plan shows a shared target and set count for each exercise. Targets are stored on the existing individual sets, with IDs preserved on edits and on retained sets after resizing. Each workout snapshots its sets, rest overrides, notes and modifier definitions. Saving notes updates the matching live plan and active snapshot in one edit. Workout completion applies eligible proposals from the final set of each exercise to all live planned sets. Other proposals match the recorded field ID and type.
+
+The Workout landing uses saved history and the session's original local start date for the daily lock. **Previous** reads completed historical sets by plan day, exercise, mode, set number and matching setting. Weight and band matching use recorded performance, while Time, Interval and Other match the saved target setting. History continues to read recorded values and labels from the session snapshot.
 
 Rep and time ranges store an optional upper bound on the planned set and its session snapshot. The numeric lower bound is the default performed value and progression threshold. History and CSV record the single value performed.
 

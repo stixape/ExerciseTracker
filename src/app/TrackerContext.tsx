@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createDefaultAppData } from '../domain/sampleData';
+import { unifyLivePlan } from '../domain/plan';
 import type { AppData } from '../domain/types';
 import { createJsonExport, downloadTextFile } from '../domain/export';
 import { validateAppData } from '../lib/appDataSchema';
@@ -196,7 +197,7 @@ export function TrackerProvider({ children }: { children: ReactNode }) {
         await backupToFolder(committedRef.current, true).catch(() => setBackupError('The pre-replacement file backup failed. The original record will still be protected in device recovery sources.'));
         await backupToRemote(committedRef.current, true).catch(() => setBackupError('The pre-replacement remote copy could not be verified. Device recovery sources remain protected; remote uploads will pause.'));
       }
-      const saved = await commitAppData(structuredClone(replacement), revisionRef.current, reason);
+      const saved = await commitAppData(structuredClone(unifyLivePlan(replacement)), revisionRef.current, reason);
       reasonRef.current = reason;
       committedRef.current = saved;
       revisionRef.current = saved.revision;

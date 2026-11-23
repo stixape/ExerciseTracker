@@ -114,6 +114,8 @@ export interface WorkoutSession {
   templateDayId: string;
   label: string;
   startedAt: string;
+  /** Local calendar date of the first start, retained when restarting. */
+  workoutDate?: string;
   completedAt?: string;
   snapshot: TemplateDay;
   sets: SessionSet[];

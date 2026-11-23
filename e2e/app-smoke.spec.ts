@@ -16,7 +16,7 @@ const bands = [
 ];
 
 async function openApp(page: Page) {
-  await page.goto('/ExerciseTracker/');
+  await page.goto('/ExerciseTracker/', { waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('button', { name: 'Create starter plan' })).toBeVisible();
   await page.getByRole('button', { name: 'Create starter plan' }).click();
   await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
@@ -30,8 +30,7 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
   } else {
     await page.clock.setFixedTime(monday);
   }
-  await openApp(page);
-  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.goto('/ExerciseTracker/', { waitUntil: 'domcontentloaded' });
   await page.getByLabel('Import JSON export').setInputFiles({
     name: 'workout-fixture.json',
     mimeType: 'application/json',
@@ -71,8 +70,8 @@ async function importWorkout(page: Page, label: string, exercises: ExerciseFixtu
     ),
   });
   await page.getByRole('button', { name: 'Restore this backup' }).click();
-  await expect(page.getByText('JSON import restored.')).toBeVisible();
-  await page.goto('/ExerciseTracker/workout/day_test');
+  await expect(page.getByRole('link', { name: 'Workout', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/workout$/);
 }
 
 function acceptNextDialog(page: Page) {
@@ -160,39 +159,60 @@ test('interval reload catches up once, then a saved workout shows recorded secon
   await page.getByRole('link', { name: 'Plan' }).click();
   const card = page.locator('details.plan-exercise-card').first();
   await card.locator('summary').click();
-  const times = card.getByRole('spinbutton', { name: 'Time (minutes)', exact: true });
-  await expect(times).toHaveCount(2);
-  await card.getByRole('button', { name: 'Add set' }).click();
-  await expect(times.nth(2)).toHaveValue('1');
-  await times.nth(2).fill('0.075');
-  await times.nth(2).press('Enter');
-  await expect(times.nth(2)).toHaveValue('0.0833');
+  const time = card.getByRole('spinbutton', { name: 'Work Time (minutes)', exact: true });
+  await expect(time).toHaveValue('0.05');
+  const sets = card.getByRole('spinbutton', { name: 'Sets', exact: true });
+  await sets.fill('3');
+  await sets.press('Enter');
+  await time.fill('0.075');
+  await time.press('Enter');
+  await expect(time).toHaveValue('0.0833');
   await page.getByRole('link', { name: 'Workout', exact: true }).click();
-  await expect(page.getByText('1x0:05')).toBeVisible();
+  await expect(page.getByText('3x0:05')).toBeVisible();
   await page.getByRole('button', { name: 'Start workout' }).click();
   await page.getByRole('button', { name: 'Start interval' }).click();
-  await expect(page.getByRole('button', { name: 'Pause interval' })).toBeEnabled();
+  const pause = page.getByRole('button', { name: 'Pause interval' });
+  const save = page.getByRole('button', { name: 'Save workout' });
+  await expect(pause).toBeEnabled();
   await page.clock.setSystemTime(new Date('2026-11-23T10:00:45'));
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Pause interval' })).toBeEnabled();
+  // A real focus or pageshow event can finish catch-up before the synthetic signals.
+  await expect(pause.or(save)).toBeEnabled();
   await page.evaluate(() => {
     window.dispatchEvent(new Event('focus'));
     window.dispatchEvent(new Event('pageshow'));
     document.dispatchEvent(new Event('visibilitychange'));
   });
   await page.clock.runFor(50);
-  const save = page.getByRole('button', { name: 'Save workout' });
   await expect(save).toBeEnabled();
   await expect.poll(cues).toEqual(['finish']);
   await page.reload();
   await expect(save).toBeEnabled();
   await expect.poll(cues).toEqual([]);
+  const reviewRows = page.locator('.summary-set-row');
+  await expect(reviewRows.nth(1).locator('.next-target-panel')).toHaveCount(0);
+  await reviewRows.last().locator('.next-target-panel summary').click();
+  const nextWork = page.getByRole('spinbutton', { name: 'Next time Work Time (minutes)' });
+  await nextWork.fill('0.1');
+  await nextWork.press('Enter');
+  await expect(reviewRows.last().getByText('Next time: 6s')).toBeVisible();
   await save.click();
   await expect(page.getByRole('heading', { name: 'Session history' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Circuit 3 completed sets' })).toBeVisible();
-  await expect(page.getByText('3s | 3s | 5s', { exact: true })).toBeVisible();
+  await expect(page.getByText('5s | 5s | 5s', { exact: true })).toBeVisible();
   await page.getByText('View recorded sets', { exact: true }).click();
   await expect(page.getByText('Set 3: 5s', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByText('3x0:06')).toBeVisible();
+  await page.getByRole('link', { name: 'Plan', exact: true }).click();
+  await card.locator('summary').click();
+  await time.fill('0.0833');
+  await time.press('Enter');
+  await page.clock.setSystemTime(new Date('2026-11-30T10:00:00'));
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await page.getByRole('button', { name: 'Start interval' }).click();
+  await expect(page.getByRole('article', { name: 'Interval timer' }).getByRole('region', { name: 'Previous' })).toContainText('5s');
 });
 
 test('loads direct routes and exposes semantic primary navigation', async ({ page }) => {
@@ -253,8 +273,16 @@ test('used band colours can be reordered and archived without rewriting records'
   ]);
 
   await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeFocused();
   const blueHandle = page.getByRole('button', { name: /Reorder Blue/ });
-  await blueHandle.dragTo(page.locator('.band-row[data-band-id="band_red"]'));
+  await expect(blueHandle).toBeEnabled();
+  await blueHandle.focus();
+  await expect(blueHandle).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(page.locator('.band-row strong')).toHaveText(['Red', 'Blue', 'Green']);
+  await blueHandle.focus();
+  await expect(blueHandle).toBeFocused();
+  await page.keyboard.press('ArrowUp');
   await expect(page.locator('.band-row strong')).toHaveText(['Blue', 'Red', 'Green']);
   await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
 
@@ -278,10 +306,13 @@ test('used band colours can be reordered and archived without rewriting records'
   await page.goto('/ExerciseTracker/workout/day_test');
   await page.getByRole('button', { name: 'Start workout' }).click();
   await expect(page.getByRole('heading', { name: 'Band Row', exact: true })).toBeVisible();
-  const performedBands = page.locator('.band-fieldset').first().locator('.band-picker button');
-  await expect(performedBands).toHaveCount(3);
-  expect(await performedBands.evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))))
-    .toEqual(['Blue for Performed bands', 'Red for Performed bands', 'Green for Performed bands']);
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('Red');
+  await expect(page.getByRole('group', { name: 'Performed bands' })).toHaveCount(0);
+  await page.locator('.next-target-panel summary').click();
+  const nextBands = page.locator('.band-fieldset').getByRole('button');
+  await expect(nextBands).toHaveCount(3);
+  expect(await nextBands.evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label'))))
+    .toEqual(['Blue for Next target bands', 'Red for Next target bands', 'Green for Next target bands']);
 });
 
 test('workout preview does not start a session and active entries survive reload', async ({ page }) => {
@@ -298,13 +329,14 @@ test('workout preview does not start a session and active entries survive reload
 
   await page.getByRole('button', { name: 'Start workout' }).click();
   await expect(page.getByText('Current set')).toBeVisible();
-  await page.getByRole('spinbutton', { name: 'Performed weight' }).fill('62.5');
+  await expect(page.getByRole('spinbutton', { name: 'Performed weight' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('60 kg');
   await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('8');
   await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('8');
   await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
 
   await page.reload();
-  await expect(page.getByRole('spinbutton', { name: 'Performed weight' })).toHaveValue('62.5');
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('60 kg');
   await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('8');
 
   await page.getByRole('button', { name: 'Pause' }).click();
@@ -313,6 +345,14 @@ test('workout preview does not start a session and active entries survive reload
   await page.reload();
   await page.getByRole('button', { name: 'Resume workout' }).click();
   await expect(page.getByRole('heading', { name: 'Test Squat' })).toBeVisible();
+  acceptNextDialog(page);
+  await page.getByRole('button', { name: 'Restart' }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('5');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await page.getByRole('button', { name: 'Save workout' }).click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Start workout' })).toBeVisible();
 });
 
 test('manual selection returns to the earliest incomplete set and supports undo, restart, and discard', async ({ page }) => {
@@ -347,14 +387,15 @@ test('manual selection returns to the earliest incomplete set and supports undo,
   await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible();
 });
 
-test('performed bands and over-target reps stay separate from reviewed next targets', async ({ page }) => {
+test('fixed bands and over-target reps stay separate from shared next targets', async ({ page }) => {
   await importWorkout(page, 'Band test', [
-    { id: 'exercise_band', name: 'Band Row', mode: 'band_reps', target: { reps: 10, bandColourIds: ['band_red'] } },
-  ]);
+    { id: 'exercise_band', name: 'Band Row', mode: 'band_reps', target: { reps: 10, bandColourIds: ['band_red'] }, setCount: 2 },
+  ], { hideRestTimes: true });
   await page.getByRole('button', { name: 'Start workout' }).click();
-
-  await page.getByRole('button', { name: 'Green for Performed bands' }).click();
-  await page.getByRole('button', { name: 'Red for Performed bands' }).click();
+  await expect(page.locator('.next-target-panel')).toHaveCount(0);
+  await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('12');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await expect(page.getByText('Set 2 of 2', { exact: true })).toBeVisible();
   await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('18');
 
   await page.getByText('Next time', { exact: false }).click();
@@ -364,7 +405,7 @@ test('performed bands and over-target reps stay separate from reviewed next targ
 
   await page.getByRole('button', { name: 'Complete set' }).click();
   await expect(page.getByText('Review before saving')).toBeVisible();
-  await expect(page.locator('.summary-set-row').getByText('Green x 18', { exact: true })).toBeVisible();
+  await expect(page.locator('.summary-set-row').getByText('Red x 18', { exact: true })).toBeVisible();
   await expect(page.getByText(/Next time: Blue.*20 reps/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save workout' })).toBeEnabled();
 
@@ -372,8 +413,10 @@ test('performed bands and over-target reps stay separate from reviewed next targ
   await expect(page.getByRole('button', { name: 'Save workout' })).toBeVisible();
   await page.getByRole('button', { name: 'Save workout' }).click();
   await expect(page.getByRole('heading', { name: 'Exercise history' })).toBeVisible();
-  await expect(page.locator('.history-row').getByText('Green x 18', { exact: true })).toBeVisible();
+  await expect(page.locator('.history-row').getByText('Red x 12 | Red x 18', { exact: true })).toBeVisible();
 
+  await page.getByRole('link', { name: 'Workout', exact: true }).click();
+  await expect(page.getByText('Blue - 2x20', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Plan' }).click();
   const bandCard = page.locator('details.plan-exercise-card').filter({ hasText: 'Band Row' });
   await bandCard.locator('summary').click();
@@ -395,6 +438,97 @@ test('completion review can undo a finished set before saving', async ({ page })
   await page.getByRole('button', { name: 'Undo Long Hold set 1' }).click();
   await expect(page.getByRole('heading', { name: 'Long Hold' })).toBeVisible();
   await expect(page.getByRole('spinbutton', { name: 'Performed seconds' })).toHaveValue('45');
+});
+
+test('saved workouts lock the local day after reload and release automatically at midnight', async ({ page }) => {
+  await importWorkout(page, 'Daily workout', [
+    { id: 'hold', name: 'Daily Hold', mode: 'timed_hold', target: { seconds: 30 } },
+  ], { runningClock: true });
+  await page.clock.setSystemTime(new Date('2026-11-23T23:59:55'));
+  await page.getByRole('button', { name: 'Start workout' }).click();
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  const save = page.getByRole('button', { name: 'Save workout' });
+  await expect(save).toBeEnabled();
+  await page.goto('/ExerciseTracker/workout');
+  await expect(page.getByText('Workout Completed!', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Resume workout' }).click();
+  await save.click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await page.goto('/ExerciseTracker/workout/active');
+  await expect(page.getByText('Workout Completed!', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Workout Completed!', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start workout' })).toHaveCount(0);
+  await page.clock.runFor(6000);
+  await expect(page.getByText('Workout Completed!', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Tuesday' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start workout' })).toBeVisible();
+});
+
+test('final-set changes are independent and Previous can find an older matching set', async ({ page }) => {
+  await importWorkout(page, 'Shared targets', [
+    { id: 'squat', name: 'Shared Squat', mode: 'weighted_reps', target: { weightKg: 60, reps: 5 }, setCount: 2 },
+  ], { hideRestTimes: true });
+  const workout = page.getByRole('link', { name: 'Workout', exact: true });
+  const start = page.getByRole('button', { name: 'Start workout' });
+  const complete = page.getByRole('button', { name: 'Complete set' });
+  const save = page.getByRole('button', { name: 'Save workout' });
+  const previous = page.getByRole('region', { name: 'Previous', exact: true });
+  const performed = page.getByRole('spinbutton', { name: 'Performed reps' });
+  await start.click();
+  await expect(previous).toHaveCount(0);
+  await expect(page.locator('.next-target-panel')).toHaveCount(0);
+  await performed.fill('4');
+  await complete.click();
+  await expect(page.getByText('Set 2 of 2', { exact: true })).toBeVisible();
+  await performed.fill('7');
+  await page.locator('.next-target-panel summary').click();
+  await page.getByRole('spinbutton', { name: 'Next target weight' }).fill('65');
+  await page.getByRole('spinbutton', { name: 'Next target reps' }).fill('4');
+  await expect(page.getByText(/Weight can only increase/)).toBeVisible();
+  await complete.click();
+  const last = page.locator('.summary-set-row').last();
+  await expect(last).toContainText('Next time: 4 reps');
+  await expect(last).toContainText(/Weight can only increase/);
+  await save.click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await workout.click();
+  await expect(page.getByText('60 KG - 2x4', { exact: true })).toBeVisible();
+  await expect(page.getByText('Workout Completed!', { exact: true })).toBeVisible();
+
+  async function changeWeight(kg: string, nextDate: string) {
+    await page.getByRole('link', { name: 'Plan', exact: true }).click();
+    const card = page.locator('.plan-exercise-card').filter({ hasText: 'Shared Squat' });
+    await card.locator('summary').click();
+    await card.getByLabel('KG', { exact: true }).fill(kg);
+    await page.clock.setFixedTime(new Date(nextDate));
+    await workout.click();
+    await start.click();
+  }
+
+  await changeWeight('65', '2026-11-30T10:00:00');
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('65 kg');
+  await expect(previous).toHaveCount(0);
+  await complete.click();
+  await expect(page.getByText('Set 2 of 2', { exact: true })).toBeVisible();
+  await complete.click();
+  await save.click();
+  await expect(page).toHaveURL(/\/progress$/);
+
+  await changeWeight('60', '2026-12-07T10:00:00');
+  await expect(previous).toContainText('4 reps');
+  await complete.click();
+  await expect(previous).toContainText('7 reps');
+  await complete.click();
+  await save.click();
+  await expect(page).toHaveURL(/\/progress$/);
+  await workout.click();
+  await expect(page.getByText('Workout Completed!', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Progress', exact: true }).click();
+  acceptNextDialog(page);
+  await page.getByRole('button', { name: /^Delete Monday session/ }).first().click();
+  await workout.click();
+  await expect(start).toBeVisible();
 });
 
 test('empty planned days cannot create dead-end workouts', async ({ page }) => {
@@ -429,8 +563,15 @@ test('plan editors are collapsed, labelled, and expose selected state', async ({
   await expect(firstCard.getByLabel('KG').first()).toBeVisible();
   await expect(firstCard.getByLabel('Repetitions').first()).toBeVisible();
   await expect(page.getByLabel('Day name')).toHaveCount(0);
-  await firstCard.getByRole('button', { name: 'Remove set 2' }).click();
-  await expect(firstCard.locator('.set-editor-heading strong')).toHaveText(['Set 1', 'Set 2']);
+  const sets = firstCard.getByRole('spinbutton', { name: 'Sets', exact: true });
+  await sets.fill('2');
+  await sets.press('Enter');
+  await expect(firstCard.locator('summary')).toContainText('2 sets');
+  await expect(firstCard.getByLabel('KG')).toHaveCount(1);
+  await sets.fill('0');
+  await sets.press('Enter');
+  await expect(sets).toHaveAttribute('aria-invalid', 'true');
+  await expect(firstCard.locator('summary')).toContainText('2 sets');
   acceptNextDialog(page);
   await firstCard.locator('.card-heading').getByRole('button', { name: /^Remove / }).click();
   await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
@@ -482,8 +623,8 @@ test('exercise rest overrides use the completed set across exercises and take ef
 
 test('records numeric and text modifiers, stages changes and saves notes immediately', async ({ page }) => {
   await importWorkout(page, 'Other workout', [
-    { id: 'custom_exercise', name: 'Custom Move', mode: 'timed_hold', target: { seconds: 30 } },
-  ]);
+    { id: 'custom_exercise', name: 'Custom Move', mode: 'timed_hold', target: { seconds: 30 }, setCount: 2 },
+  ], { hideRestTimes: true });
   const workout = page.getByRole('link', { name: 'Workout', exact: true });
   const plan = page.getByRole('link', { name: 'Plan', exact: true });
   const card = page.locator('.plan-exercise-card').filter({ hasText: 'Custom Move' });
@@ -514,15 +655,19 @@ test('records numeric and text modifiers, stages changes and saves notes immedia
   await page.getByRole('button', { name: 'Resume workout' }).click();
   await page.getByLabel('Performed Balance').fill('-1.5');
   await page.getByLabel('Performed Grip').fill('Neutral');
+  await expect(page.locator('.next-target-panel')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('Target GripWide');
+  await page.getByLabel('Performed Grip').fill('Narrow');
   await page.locator('.next-target-panel summary').click();
   await page.getByRole('button', { name: 'Clear Balance target' }).click();
   await page.getByLabel('Next target Grip').fill('Close');
   await page.getByRole('button', { name: 'Complete set' }).click();
-  await expect(page.locator('.summary-set-row')).toContainText('Balance: -1.5 · Grip: Neutral');
-  await expect(page.locator('.summary-set-row')).toContainText('Balance: Clear target');
+  await expect(page.locator('.summary-set-row').first()).toContainText('Balance: -1.5 · Grip: Neutral');
+  await expect(page.locator('.summary-set-row').last()).toContainText('Balance: Clear target');
   await page.getByRole('button', { name: 'Save workout' }).click();
   await expect(page.getByRole('heading', { name: 'Session history' })).toBeVisible();
-  await expect(page.locator('.metric-tile')).toContainText(['Completed sessions1', 'Completed sets1']);
+  await expect(page.locator('.metric-tile')).toContainText(['Completed sessions1', 'Completed sets2']);
   await page.getByText('View recorded sets').click();
   await expect(page.locator('.recorded-notes')).toHaveText('Use a mat. Pause at the top.');
   await plan.click();
@@ -531,6 +676,10 @@ test('records numeric and text modifiers, stages changes and saves notes immedia
   await expect(card.getByLabel('Target Grip')).toHaveValue('Close');
   await card.getByRole('button', { name: 'Remove modifier Balance' }).click();
   await card.getByRole('button', { name: 'Remove modifier Grip' }).click();
+  const setCount = card.getByRole('spinbutton', { name: 'Sets', exact: true });
+  await setCount.fill('1');
+  await setCount.press('Enter');
+  await page.clock.setFixedTime(new Date('2026-11-30T10:00:00'));
   await workout.click();
   await page.getByRole('button', { name: 'Start workout' }).click();
   await page.getByRole('button', { name: 'Complete set' }).click();
@@ -540,11 +689,11 @@ test('records numeric and text modifiers, stages changes and saves notes immedia
 test('shows planned ranges and records single performed reps and seconds', async ({ page }) => {
   await importWorkout(page, 'Target ranges', [
     { id: 'range_weighted', name: 'Range Squat', mode: 'weighted_reps', target: { weightKg: 45, reps: 5 } },
-    { id: 'range_timed', name: 'Range Hold', mode: 'timed_hold', target: { seconds: 40 } },
+    { id: 'range_timed', name: 'Range Hold', mode: 'timed_hold', target: { seconds: 40 }, setCount: 2 },
     { id: 'range_band', name: 'Range Row', mode: 'band_reps', target: { bandColourIds: ['band_red'], reps: 10 } },
   ]);
   await expect(page.getByText('45 KG - 1x5', { exact: true })).toBeVisible();
-  await expect(page.getByText('1x40s', { exact: true })).toBeVisible();
+  await expect(page.getByText('2x40s', { exact: true })).toBeVisible();
   await expect(page.getByText('Red - 1x10', { exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: 'Plan', exact: true }).click();
@@ -565,7 +714,7 @@ test('shows planned ranges and records single performed reps and seconds', async
 
   await page.getByRole('link', { name: 'Workout', exact: true }).click();
   await expect(page.getByText('45 KG - 1x3-5', { exact: true })).toBeVisible();
-  await expect(page.getByText('1x20-60s', { exact: true })).toBeVisible();
+  await expect(page.getByText('2x20-60s', { exact: true })).toBeVisible();
   await expect(page.getByText('Red - 1x7-10', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Start workout' }).click();
   await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('3-5');
@@ -582,6 +731,10 @@ test('shows planned ranges and records single performed reps and seconds', async
   await page.getByRole('spinbutton', { name: 'Performed seconds' }).fill('23');
   await page.getByRole('button', { name: 'Complete set' }).click();
   await page.getByRole('button', { name: 'Skip rest' }).click();
+  await expect(page.getByRole('region', { name: 'Target', exact: true })).toContainText('20-60s');
+  await expect(page.getByRole('spinbutton', { name: 'Performed seconds' })).toHaveValue('20');
+  await page.getByRole('button', { name: 'Complete set' }).click();
+  await page.getByRole('button', { name: 'Skip rest' }).click();
   await expect(page.getByRole('spinbutton', { name: 'Performed reps' })).toHaveValue('7');
   await page.getByRole('spinbutton', { name: 'Performed reps' }).fill('8');
   await page.getByRole('button', { name: 'Complete set' }).click();
@@ -595,7 +748,7 @@ test('shows planned ranges and records single performed reps and seconds', async
 
   await page.getByRole('link', { name: 'Workout', exact: true }).click();
   await expect(page.getByText('45 KG - 1x3', { exact: true })).toBeVisible();
-  await expect(page.getByText('1x20-60s', { exact: true })).toBeVisible();
+  await expect(page.getByText('2x20-60s', { exact: true })).toBeVisible();
   await expect(page.getByText('Red - 1x7-10', { exact: true })).toBeVisible();
 });
 
@@ -631,7 +784,8 @@ test('keeps the folder across reloads and retries rotation after permission loss
     return revisions.sort((left, right) => left - right);
   });
   expect(await copies()).toEqual([]);
-  async function saveWorkout() {
+  async function saveWorkout(week: number) {
+    await page.clock.setFixedTime(new Date(2026, 10, 23 + week * 7, 10));
     await page.getByRole('link', { name: 'Workout', exact: true }).click();
     await page.getByRole('button', { name: 'Start workout' }).click();
     await page.getByRole('button', { name: 'Complete set' }).click();
@@ -639,7 +793,7 @@ test('keeps the folder across reloads and retries rotation after permission loss
     await expect(page).toHaveURL(/\/progress$/);
   }
   for (let count = 1; count <= 3; count++) {
-    await saveWorkout();
+    await saveWorkout(count - 1);
     await expect.poll(copies).toEqual(count === 1 ? [1] : [count - 1, count]);
   }
   await expect(page.getByText(/Saved on this device|Independent backup needed/)).toHaveCount(0);
@@ -648,13 +802,14 @@ test('keeps the folder across reloads and retries rotation after permission loss
   await page.getByRole('checkbox', { name: /Hide rest times/ }).check();
   await expect(page.locator('.app-interaction')).toHaveAttribute('aria-busy', 'false');
   const secondTab = await context.newPage();
+  await secondTab.clock.setFixedTime(new Date(2026, 11, 7, 10));
   await secondTab.goto('/ExerciseTracker/workout');
-  await expect(secondTab.getByRole('button', { name: 'Start workout' })).toBeVisible();
+  await expect(secondTab.getByText('Workout Completed!', { exact: true })).toBeVisible();
   expect(await copies()).toEqual([2, 3]);
   await secondTab.close();
 
   await page.evaluate(() => localStorage.setItem('test-folder-denied', 'true'));
-  await saveWorkout();
+  await saveWorkout(3);
   const accessWarning = page.getByText('Workout backup pending. Reconnect the backup folder in Settings.');
   await expect(accessWarning).toBeVisible();
   expect(await copies()).toEqual([2, 3]);

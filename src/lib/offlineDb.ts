@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable, type Transaction } from 'dexie';
 import { createId } from '../domain/ids';
+import { unifyLivePlan } from '../domain/plan';
 import type { ActiveWorkout, AppData } from '../domain/types';
 import { validateAppData, validateActiveWorkoutData } from './appDataSchema';
 import { readLegacyLocalData, readLegacyRaw, restoreAppData } from './localData';
@@ -79,6 +80,7 @@ export class ExerciseTrackerDb extends Dexie {
     this.version(7).stores({ workoutBackupJobs: '&snapshotId, [userId+revision]' });
     // Older clients cannot safely open sessions containing Interval.
     this.version(8).stores({});
+    this.version(9).stores({}).upgrade(migrateUniformPlan);
   }
 }
 
@@ -112,6 +114,21 @@ async function migrateCanonical(tx: Transaction) {
     await archive(tx, record.userId, 'historical-schema', record);
     const restored = restoreAppData(record.data, record.userId, false);
     if (restored.ok) await table.put({ ...record, data: restored.data });
+  }
+}
+
+async function migrateUniformPlan(tx: Transaction) {
+  const table = tx.table<StoredRecord>('appData');
+  const jobs = tx.table<WorkoutBackupJob>('workoutBackupJobs');
+  for (const record of await table.toArray()) {
+    if (!record.snapshotId || !Number.isSafeInteger(record.revision) || record.revision! < 1 ||
+      record.checksum !== checksum(record.data) || !validateAppData(record.data).ok) continue;
+    const data = unifyLivePlan(record.data);
+    if (data === record.data) continue;
+    await archive(tx, record.userId, 'before-uniform-plan', record);
+    const job = await jobs.get(record.snapshotId);
+    if (job && !job.snapshot) await jobs.put({ ...job, snapshot: record as AppSnapshot });
+    await table.put(makeSnapshot(data, record.revision! + 1));
   }
 }
 
@@ -155,7 +172,7 @@ export async function loadAppData(userId: string): Promise<LoadResult> {
     const sources = await offlineDb.recoverySources.where('userId').equals(userId).toArray();
     if (sources.some((source) => source.source.startsWith('unconverted-'))) return { kind: 'recovery_required', reason: 'Original legacy records are retained but need recovery. No starter plan was written.', revision: null };
     if (legacy.kind === 'invalid') return { kind: 'recovery_required', reason: 'Legacy data could not be read. Its original contents have been preserved.', revision: null };
-    if (legacy.kind === 'valid') return { kind: 'ready', snapshot: await commitAppData(legacy.data, null, 'migration') };
+    if (legacy.kind === 'valid') return { kind: 'ready', snapshot: await commitAppData(unifyLivePlan(legacy.data), null, 'migration') };
     return { kind: 'empty' };
   } catch {
     return { kind: 'recovery_required', reason: 'Saved data could not be opened. No starter plan was written. Export the original records or try reopening the app.', revision: null };

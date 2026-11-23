@@ -28,6 +28,7 @@ const JSON_DATA_MIGRATIONS: Readonly<Record<number, JsonDataMigration>> = {
   4: (data) => structuredClone(data),
   5: (data) => data,
   6: (data) => data,
+  7: (data) => data,
 };
 
 type LegacySetValues = SetValues & { leftReps?: number; rightReps?: number };

@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultAppData } from '../domain/sampleData';
+import { hasSavedWorkoutOn } from '../domain/calendar';
 import { completeSessionIfDone, completeSet, createSessionFromDay } from '../domain/session';
 import { parseJsonImport } from '../lib/localData';
 import { commitAppData, loadAppData, offlineDb } from '../lib/offlineDb';
@@ -79,10 +80,24 @@ describe('saving and exclusive replacements', () => {
       expect(await context.saveData((data) => ({ ...data, sessions: [completed], activeWorkout: undefined }), 'workout')).toBe(false);
     });
     expect(context.data.activeWorkout?.session.id).toBe(completed.id);
+    expect(hasSavedWorkoutOn(context.data.sessions, new Date(completed.startedAt))).toBe(false);
     expect(await offlineDb.workoutBackupJobs.count()).toBe(0);
     await act(async () => { expect(await context.retrySave()).toBe(true); });
     expect(context.data.activeWorkout).toBeUndefined();
     expect(context.data.sessions.map((item) => item.id)).toEqual([completed.id]);
+    expect(hasSavedWorkoutOn(context.data.sessions, new Date(completed.startedAt))).toBe(true);
     expect(await repository.workoutBackupKeys('local-user')).toEqual([context.snapshot?.snapshotId]);
+  });
+
+  it('restores a mixed plan with shared targets while preserving the imported workout', async () => {
+    const imported = createDefaultAppData('local-user');
+    const day = imported.template.days[0];
+    day.exercises[0].sets[1].target.weightKg = 25;
+    imported.activeWorkout = { session: createSessionFromDay(day) };
+    await mount();
+    await act(async () => { expect(await context.replaceData(imported, 'restore')).toBe(true); });
+    expect(context.data.template.days[0].exercises[0].sets.map((set) => set.target.weightKg)).toEqual([60, 60, 60]);
+    expect(context.data.activeWorkout).toEqual(imported.activeWorkout);
+    expect(imported.template.days[0].exercises[0].sets[1].target.weightKg).toBe(25);
   });
 });

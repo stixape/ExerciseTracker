@@ -1,10 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const slowBrowserHost = process.env.EXERCISE_TRACKER_E2E_SLOW === '1';
+
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30_000,
+  timeout: slowBrowserHost ? 180_000 : 30_000,
   expect: {
-    timeout: 5_000,
+    timeout: slowBrowserHost ? 20_000 : 5_000,
   },
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),

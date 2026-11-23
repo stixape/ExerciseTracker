@@ -1,8 +1,10 @@
-import type { BandColour, Modifier, PlannedSetProgression, SessionSet, WorkoutSession, WorkoutTemplate } from './types';
-import { validatePlannedSetProgression } from './validation';
+import { sameBandSelection } from './bands';
 import { changeModifierValue, formatModifierValues, modifierValue } from './modifiers';
-import { formatTargetRange, getRecordedRangeMax, rangeMetric } from './targetRange';
+import { replaceExerciseTarget } from './plan';
+import { formatTargetRange, rangeMetric } from './targetRange';
 import { formatDuration } from './rest';
+import type { BandColour, Modifier, PlannedSetProgression, SessionSet, TemplateExercise, WorkoutSession, WorkoutTemplate } from './types';
+import { validatePlannedSetProgression } from './validation';
 
 export type { PlannedSetProgression } from './types';
 
@@ -18,101 +20,118 @@ export function getRepWheelMax(set: SessionSet, fallback = 50): number {
   return Math.max(0, Math.floor(fallback), Math.floor(set.target.reps ?? 0));
 }
 
-export function applySetProgression(
-  template: WorkoutTemplate,
-  session: WorkoutSession,
-  set: SessionSet,
-  progression?: PlannedSetProgression,
-  knownBandColourIds?: Iterable<string>,
-): WorkoutTemplate {
-  if (!progression || !isSetTargetMet(set)) return template;
-
-  const errors = validatePlannedSetProgression(set.mode, progression, knownBandColourIds);
-  if (errors.length) throw new RangeError(errors.join(' '));
-  const nextTarget = progressionForMode(set, progression);
-  if (!progressionChangesTarget(set, nextTarget, getRecordedRangeMax(session, set))) return template;
-  const { modifiers: proposedModifiers, ...standardTarget } = nextTarget;
-  const recordedFields = set.mode === 'other' ? session.snapshot.exercises[set.exerciseIndex]?.modifiers : undefined;
-
-  return {
-    ...template,
-    days: template.days.map((day) => {
-      if (day.id !== session.templateDayId) return day;
-
-      return {
-        ...day,
-        exercises: day.exercises.map((exercise) => {
-          if (exercise.id !== set.exerciseId || exercise.mode !== set.mode) return exercise;
-
-          return {
-            ...exercise,
-            sets: exercise.sets.map((templateSet) => {
-              if (templateSet.id !== set.templateSetId) return templateSet;
-              if (set.mode === 'other') {
-                let modifiers = templateSet.target.modifiers;
-                for (const field of exercise.modifiers ?? []) {
-                  const value = modifierValue(proposedModifiers, field.id);
-                  if (value !== undefined && recordedFields?.some((recorded) => recorded.id === field.id && recorded.type === field.type)) {
-                    modifiers = changeModifierValue(modifiers, field.id, value ?? undefined);
-                  }
-                }
-                return { ...templateSet, target: { ...templateSet.target, modifiers } };
-              }
-
-              return {
-                ...templateSet,
-                rangeMax: standardTarget.reps !== undefined || standardTarget.seconds !== undefined ? undefined : templateSet.rangeMax,
-                target: {
-                  ...templateSet.target,
-                  ...standardTarget,
-                  ...(nextTarget.bandColourIds ? { bandColourIds: [...nextTarget.bandColourIds] } : {}),
-                },
-              };
-            }),
-          };
-        }),
-      };
-    }),
-  };
+export function getFinalExerciseSets(session: WorkoutSession): Map<string, SessionSet> {
+  const finalSets = new Map<string, SessionSet>();
+  for (const set of session.sets) {
+    if (set.setNumber > (finalSets.get(set.exerciseId)?.setNumber ?? 0)) finalSets.set(set.exerciseId, set);
+  }
+  return finalSets;
 }
 
-/**
- * Stores a proposed target on the performed set without mutating the plan. Passing
- * no proposal, an unchanged proposal, or a missed target removes a prior proposal.
- */
 export function stageSetProgression(
   set: SessionSet,
-  progression?: PlannedSetProgression,
-  knownBandColourIds?: Iterable<string>,
-  rangeMax?: number,
+  progression: PlannedSetProgression | undefined,
+  knownBandColourIds: Iterable<string>,
 ): SessionSet {
-  if (!progression || !isSetTargetMet(set)) return withoutProposedTarget(set);
-
-  const errors = validatePlannedSetProgression(set.mode, progression, knownBandColourIds);
+  const changes = Object.fromEntries(Object.entries(progression ?? {}).filter(([, value]) => value !== undefined));
+  if (progression?.modifiers && !Object.keys(progression.modifiers).length) delete changes.modifiers;
+  if (!Object.keys(changes).length) return { ...set, proposedNextTarget: undefined };
+  const errors = validatePlannedSetProgression(set.mode, changes, knownBandColourIds);
   if (errors.length) throw new RangeError(errors.join(' '));
-  const nextTarget = progressionForMode(set, progression);
-  if (!progressionChangesTarget(set, nextTarget, rangeMax)) return withoutProposedTarget(set);
-  return {
-    ...set,
-    proposedNextTarget: {
-      ...nextTarget,
-      ...(nextTarget.bandColourIds ? { bandColourIds: [...nextTarget.bandColourIds] } : {}),
-    },
-  };
+  return { ...set, proposedNextTarget: structuredClone(changes) };
 }
 
-/** Applies every staged target only once a whole workout has been completed. */
-export function applySessionProgressions(
-  template: WorkoutTemplate,
-  session: WorkoutSession,
-  knownBandColourIds?: Iterable<string>,
-): WorkoutTemplate {
-  if (!session.completedAt || session.sets.some((set) => !set.completedAt)) return template;
+function bandStrength(ids: string[] | undefined, palette: BandColour[]): number {
+  return palette.reduce((strength, band, index) => strength + (ids?.includes(band.id) ? index + 1 : 0), 0);
+}
 
-  return session.sets.reduce(
-    (current, set) => applySetProgression(current, session, set, set.proposedNextTarget, knownBandColourIds),
-    template,
-  );
+function metRecordedTarget(set: SessionSet, fields: Modifier[] | undefined, bands: BandColour[]): boolean {
+  const { actual, target } = set;
+  if (set.mode === 'timed_hold' || set.mode === 'interval') return (actual.seconds ?? 0) >= (target.seconds ?? 0);
+  if (set.mode === 'other') {
+    return (fields ?? []).every((field) => {
+      const goal = modifierValue(target.modifiers, field.id);
+      const result = modifierValue(actual.modifiers, field.id);
+      return goal === undefined || (typeof goal === 'number' ? typeof result === 'number' && result >= goal : result === goal);
+    });
+  }
+  if ((actual.reps ?? 0) < (target.reps ?? 0)) return false;
+  return set.mode === 'weighted_reps'
+    ? (actual.weightKg ?? 0) >= (target.weightKg ?? 0)
+    : bandStrength(actual.bandColourIds, bands) >= bandStrength(target.bandColourIds, bands);
+}
+
+const progressionLabels = { weightKg: 'Weight', reps: 'Repetitions', seconds: 'Seconds' } as const;
+
+export function reviewExerciseProgression(
+  exercise: TemplateExercise | undefined,
+  session: WorkoutSession,
+  finalSet: SessionSet,
+  bands: BandColour[],
+): { accepted: PlannedSetProgression; blocked: string[] } {
+  const accepted: PlannedSetProgression = {};
+  const blocked: string[] = [];
+  const proposal = finalSet.proposedNextTarget;
+  const shared = exercise?.sets[0];
+  if (!exercise || exercise.mode !== finalSet.mode || !shared || !proposal) return { accepted, blocked };
+  const recordedFields = session.snapshot.exercises[finalSet.exerciseIndex]?.modifiers;
+  let targetsMet: boolean | undefined;
+  function canApply(label: string, increases: boolean) {
+    if (!increases) return true;
+    targetsMet ??= session.sets.every((set) => set.exerciseId !== finalSet.exerciseId ||
+      ((set.id === finalSet.id || Boolean(set.completedAt)) && metRecordedTarget(set, recordedFields, bands)));
+    if (!targetsMet) blocked.push(label);
+    return targetsMet;
+  }
+
+  for (const key of ['weightKg', 'reps', 'seconds'] as const) {
+    const value = proposal[key];
+    const current = shared.target[key];
+    const replacesRange = rangeMetric(exercise.mode) === key && shared.rangeMax !== undefined;
+    const label = exercise.mode === 'interval' ? 'Work Time' : progressionLabels[key];
+    if (value !== undefined && (value !== current || replacesRange) && canApply(label, value > (current ?? 0))) accepted[key] = value;
+  }
+  const proposedBands = proposal.bandColourIds;
+  if (proposedBands && !sameBandSelection(proposedBands, shared.target.bandColourIds) &&
+    canApply('Bands', bandStrength(proposedBands, bands) > bandStrength(shared.target.bandColourIds, bands))) {
+    accepted.bandColourIds = proposedBands;
+  }
+  for (const field of exercise.modifiers ?? []) {
+    if (!recordedFields?.some((recorded) => recorded.id === field.id && recorded.type === field.type)) continue;
+    const value = modifierValue(proposal.modifiers, field.id);
+    const current = modifierValue(shared.target.modifiers, field.id);
+    if (value === undefined || (value ?? undefined) === current) continue;
+    if (canApply(field.label, typeof value === 'number' && typeof current === 'number' && value > current)) {
+      accepted.modifiers = changeModifierValue(accepted.modifiers, field.id, value);
+    }
+  }
+  return { accepted, blocked };
+}
+
+export function applySessionProgressions(template: WorkoutTemplate, session: WorkoutSession, bands: BandColour[]): WorkoutTemplate {
+  if (!session.completedAt || session.sets.some((set) => !set.completedAt)) return template;
+  const finalSets = getFinalExerciseSets(session);
+  const days = template.days.map((day) => {
+    if (day.id !== session.templateDayId) return day;
+    const exercises = day.exercises.map((exercise) => {
+      const set = finalSets.get(exercise.id);
+      if (!set?.proposedNextTarget) return exercise;
+      const { accepted } = reviewExerciseProgression(exercise, session, set, bands);
+      if (!Object.keys(accepted).length) return exercise;
+      const { modifiers: proposedModifiers, ...standard } = accepted;
+      const shared = exercise.sets[0];
+      let modifiers = shared.target.modifiers;
+      for (const [id, value] of Object.entries(proposedModifiers ?? {})) {
+        modifiers = changeModifierValue(modifiers, id, value ?? undefined);
+      }
+      return replaceExerciseTarget(exercise, {
+        rangeMax: standard.reps === undefined && standard.seconds === undefined ? shared.rangeMax : undefined,
+        target: { ...shared.target, ...standard, ...(exercise.mode === 'other' ? { modifiers } : {}) },
+      });
+    });
+    return exercises.every((exercise, index) => exercise === day.exercises[index]) ? day : { ...day, exercises };
+  });
+  return days.every((day, index) => day === template.days[index]) ? template : { ...template, days };
 }
 
 export function formatSetTarget(set: SessionSet, bandColours: BandColour[], modifiers?: Modifier[], rangeMax?: number): string {
@@ -131,58 +150,4 @@ function formatBandNames(ids: string[], bandColours: BandColour[]): string {
   const knownIds = new Set(bandColours.map((band) => band.id));
   names.push(...ids.filter((id) => !knownIds.has(id)).map(() => 'Unknown band'));
   return names.join(' + ');
-}
-
-function isSetTargetMet(set: SessionSet): boolean {
-  if (set.mode === 'other') return true;
-  if (set.mode === 'timed_hold') return (set.actual.seconds ?? 0) >= (set.target.seconds ?? 0);
-  // Weight is numerically comparable; band colours are user-defined and have no
-  // reliable strength ordering, so band progression is gated by reps alone.
-  if (set.mode === 'weighted_reps' && (set.actual.weightKg ?? 0) < (set.target.weightKg ?? 0)) return false;
-  return (set.actual.reps ?? 0) >= (set.target.reps ?? 0);
-}
-
-function sameIds(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightIds = new Set(right);
-  return left.every((id) => rightIds.has(id));
-}
-
-function progressionForMode(set: SessionSet, progression: PlannedSetProgression): PlannedSetProgression {
-  if (set.mode === 'other') {
-    return { modifiers: Object.fromEntries(Object.entries(progression.modifiers ?? {}).filter(([id, value]) =>
-      (value ?? undefined) !== modifierValue(set.target.modifiers, id))) };
-  }
-  if (set.mode === 'timed_hold') {
-    return progression.seconds === undefined ? {} : { seconds: progression.seconds };
-  }
-
-  const repTargets = progression.reps === undefined ? {} : { reps: progression.reps };
-  if (set.mode === 'weighted_reps') {
-    return {
-      ...repTargets,
-      ...(progression.weightKg === undefined ? {} : { weightKg: progression.weightKg }),
-    };
-  }
-  return {
-    ...repTargets,
-    ...(progression.bandColourIds === undefined ? {} : { bandColourIds: [...progression.bandColourIds] }),
-  };
-}
-
-function progressionChangesTarget(set: SessionSet, progression: PlannedSetProgression, rangeMax?: number): boolean {
-  const metric = rangeMetric(set.mode);
-  if (rangeMax !== undefined && metric && progression[metric] !== undefined) return true;
-  return Object.entries(progression).some(([key, value]) => {
-    if (key === 'bandColourIds') return !sameIds(value as string[], set.target.bandColourIds ?? []);
-    if (key === 'modifiers') return Object.keys(progression.modifiers ?? {}).length > 0;
-    return set.target[key as keyof typeof set.target] !== value;
-  });
-}
-
-function withoutProposedTarget(set: SessionSet): SessionSet {
-  if (!set.proposedNextTarget) return set;
-  const next = { ...set };
-  delete next.proposedNextTarget;
-  return next;
 }

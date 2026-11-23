@@ -1,4 +1,5 @@
 import { createId } from './ids';
+import { localWorkoutDate } from './calendar';
 import type { ActiveRest, AppData, RestEvent, SessionSet, SetValues, TemplateDay, WorkoutSession } from './types';
 import { getExerciseRestSeconds, getNextIncompleteSet, isFinalSet } from './rest';
 
@@ -10,7 +11,7 @@ function cloneSetValues(values: SetValues): SetValues {
   };
 }
 
-export function createSessionFromDay(day: TemplateDay): WorkoutSession {
+export function createSessionFromDay(day: TemplateDay, start = new Date(), workoutDate = localWorkoutDate(start)): WorkoutSession {
   const sets: SessionSet[] = day.exercises.flatMap((exercise, exerciseIndex) =>
     exercise.sets.map((set) => ({
       id: createId('session_set'),
@@ -29,7 +30,8 @@ export function createSessionFromDay(day: TemplateDay): WorkoutSession {
     id: createId('session'),
     templateDayId: day.id,
     label: day.label,
-    startedAt: new Date().toISOString(),
+    startedAt: start.toISOString(),
+    workoutDate,
     snapshot: structuredClone(day),
     sets,
     restEvents: [],

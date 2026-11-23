@@ -1,23 +1,30 @@
 # ExerciseTracker project status
 
-Updated 2026-11-22 on `codex/interval-timer`, based on `35b0a2c`. The base working tree was clean. Publishing requires the approval described in AGENTS.md.
+Updated 2026-11-23 on `codex/uniform-workout-sets`, based on `a5be30d`. The base working tree was clean. Publishing requires the approval described in AGENTS.md.
 
 ## Implemented
 
-- Workout opens directly to Today's plan. The landing panel scrolls its exercise list when needed and keeps the start or resume button in view. Completed session and set totals appear in Progress.
-- Today's summary puts load first and groups consecutive identical sets, for example `45 KG - 3x5`. Plan accepts ranges for reps and seconds. The active workout shows the range and prefills the numeric performed field with the lower bound.
+- Workout opens to today's plan with Start, Resume or **Workout Completed!**. A saved workout locks new starts on its original local start date. Completed session and set totals appear in Progress.
+- Plan has shared exercise targets and a numerical set count. It accepts rep and second ranges. Active workouts still record individual sets, use fixed weights and bands and show **Previous** when a saved set matches the setting.
+- Final-set **Next time** changes apply to all sets on successful save. Increases require every set to meet its target. Interval work time can be staged in the workout review.
 - Routine save and backup banners are removed. Actionable alerts remain visible and Settings shows the latest verified backup.
 - Plan includes custom rest minutes, multiline notes and numeric or text Other modifiers. Active-workout notes save to the matching plan immediately. Other targets staged during a workout apply on completion, and history retains the recorded labels and values.
 - Interval sets use decimal minutes in Plan and whole seconds in records. The active timer advances automatically with a saved deadline and phase, supports pause, resume and skip rest, and uses the supplied offline bell and usual final alarm. History and CSV include interval seconds.
-- Canonical IndexedDB schema v8 preserves the revision checks, checkpoints and transactional completed-workout file queue. The upgrade keeps the existing tables and prevents older clients from writing interval snapshots.
+- IndexedDB v9 adopts Set 1's targets for mixed live plans and preserves originals, saved history, active sessions and queued workout backups. Revision checks and backup queue writes remain transactional.
 - Ready/empty/recovery startup states; defaults require explicit creation. Original legacy strings, retired table rows and pre-normalisation/pre-replacement records are preserved. Interrupted upgrades roll back atomically and can retry. Canonical saves do not depend on access to obsolete localStorage.
 - Exclusive, previewed/confirmed import/reset/restore. Unfinished fields stay outside committed state. Failed saves retain pending valid changes for rescue export and explicit retry; workout-save navigation waits for commitment.
-- Portable JSON v7 with active interval state, snapshot identity, source revision/time and SHA-256 checks. Imports cover v1–v7, with checksum verification for v5–v7. The checked-in optional remote schema accepts v5–v7.
+- Portable JSON v8 includes the local workout date and staged Interval work time. Imports cover v1–v8, with checksum verification for v5–v8. The checked-in optional remote schema accepts v5–v8.
 - A saved workout produces a verified JSON file when a supported device folder is connected. The folder keeps the newest two verified automatic workout files. Manual and protected copies use their existing recovery paths. If access is unavailable, Settings offers manual downloads and folder reconnection.
 - Optional Supabase authentication and immutable owner/device-stream backup integration, disabled until a dedicated origin is configured and a user opts in and approves uploads. Reset/import/restore pauses uploads and rotates the next stream. Client retries/read-back checks and server migration/policy tests are included; remote versions never automatically replace local data.
 - Historical band values are preserved through archive/restore; recorded session details remain readable after plan changes. Starter datasets no longer share a mutable palette. Compatible dependency security updates and patched Vitest 4.1.12 are locked.
 
 See [architecture](ARCHITECTURE.md), [decisions](DECISIONS.md), [recovery instructions](docs/recovery.md), [audit and evidence limits](docs/reliability-audit.md), and [optional remote setup](docs/sync-strategy.md).
+
+## Shared targets verification on 2026-11-23
+
+- `npm run verify` passed in CI mode on Node 24.19.0 and npm 11.17.0 with installed Chrome and the opt-in `EXERCISE_TRACKER_E2E_SLOW=1` setting for intermittent Windows timeouts. Lint, 153 unit tests, the Pages build, and 51 browser cases passed. The desktop run skipped the mobile-only viewport test as intended. The offline check verified all 13 precached URLs.
+- Browser coverage includes lockout after save and reload, midnight and carried-over workouts, reopening a day after deleting its saved workout, all five shared target types, per-set Previous results, and final-set changes with mixed eligibility. Tests also cover failed saves and migration of a mixed v8 plan with a running interval and queued backup.
+- The optional Supabase v8 policy migration and pgTAP assertions are checked in. The local environment had no Supabase or PostgreSQL test runtime.
 
 ## Interval verification on 2026-11-22
 

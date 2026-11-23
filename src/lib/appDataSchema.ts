@@ -16,6 +16,7 @@ import { MAX_NOTE_LENGTH, MAX_REST_SECONDS, validModifierValue } from '../domain
 import { rangeMetric } from '../domain/targetRange';
 import { getIntervalSet, MAX_INTERVAL_SECONDS } from '../domain/interval';
 import { getExerciseRestSeconds } from '../domain/rest';
+import { MAX_EXERCISE_SETS, MAX_WORKOUT_SETS } from '../domain/plan';
 
 type RecordValue = Record<string, unknown>;
 
@@ -200,8 +201,11 @@ function validateProgression(
   knownBandIds: ReadonlySet<string>,
   allowLegacySideFields: boolean,
 ): string | undefined {
-  if (mode === 'interval') return `${path} is unavailable for Interval.`;
   if (!isRecord(value)) return `${path} must be an object.`;
+  if (mode === 'interval') {
+    if (Object.keys(value).length !== 1) return `${path} must contain only the proposed work time.`;
+    return finiteNumberError(value.seconds, `${path}.seconds`, { integer: true, minimum: 1, maximum: MAX_INTERVAL_SECONDS });
+  }
   if (mode === 'other') {
     return Object.keys(value).length === 1 && isRecord(value.modifiers) && Object.keys(value.modifiers).length > 0
       ? undefined : `${path} must contain proposed modifier targets.`;
@@ -301,7 +305,7 @@ function validateTemplateExercise(
       ![...value.notes].some((character) => character.charCodeAt(0) === 127 || (character.charCodeAt(0) < 32 && character !== '\n' && character !== '\t')))
       ? undefined : `${path}.notes must be valid text.`) ??
     validateModifierDefinitions(value.modifiers, value.mode as MetricMode, `${path}.modifiers`) ??
-    arrayError(value.sets, `${path}.sets`, 100);
+    arrayError(value.sets, `${path}.sets`, MAX_EXERCISE_SETS);
   if (baseError) return baseError;
   if ((value.mode === 'timed_hold' || value.mode === 'interval') && value.tracksSides === true) return `${path}.tracksSides cannot be true for a timed exercise.`;
 
@@ -506,8 +510,10 @@ function validateSession(
     idError(value.templateDayId, `${path}.templateDayId`) ??
     stringError(value.label, `${path}.label`, 'a session label') ??
     isoDateError(value.startedAt, `${path}.startedAt`) ??
-    arrayError(value.sets, `${path}.sets`, 10_000) ??
-    arrayError(value.restEvents, `${path}.restEvents`, 10_000) ??
+    (value.workoutDate === undefined || (typeof value.workoutDate === 'string' && isValidIsoDateTime(`${value.workoutDate}T00:00:00Z`))
+      ? undefined : `${path}.workoutDate must be a valid YYYY-MM-DD calendar date.`) ??
+    arrayError(value.sets, `${path}.sets`, MAX_WORKOUT_SETS) ??
+    arrayError(value.restEvents, `${path}.restEvents`, MAX_WORKOUT_SETS) ??
     validateTemplateDay(value.snapshot, `${path}.snapshot`, knownBandIds, options);
   if (baseError) return baseError;
 
